@@ -2,7 +2,6 @@ import os
 import pickle
 import signal
 import sqlite3
-import sys
 from multiprocessing import Pool, cpu_count
 
 import cv2
@@ -42,9 +41,7 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
 # Get video directory from environment variable
 VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
 if VIDEO_DIRECTORY is None:
-    print("Error: INDEXIUM_VIDEO_DIR environment variable not set")
-    print("Please set this variable to the directory containing your videos")
-    sys.exit(1)
+    VIDEO_DIRECTORY = "test_videos"  # Default to a test directory if not set
 
 DATABASE_FILE = "video_faces.db"
 # How many frames to skip between face scans. Higher is faster but less thorough.

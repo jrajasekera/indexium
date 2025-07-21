@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .idea
+
+# Project files
 video_faces.db
 thumbnails
+video_faces.db-journal

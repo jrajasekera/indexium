@@ -1,6 +1,5 @@
 import os
 import sqlite3
-import sys
 
 import ffmpeg
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, g
@@ -9,9 +8,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, sen
 # Get video directory from environment variable
 VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
 if VIDEO_DIRECTORY is None:
-    print("Error: INDEXIUM_VIDEO_DIR environment variable not set")
-    print("Please set this variable to the directory containing your videos")
-    sys.exit(1)
+    VIDEO_DIRECTORY = "test_videos"  # Default to a test directory if not set
 
 DATABASE_FILE = "video_faces.db"
 # Directory containing cached face thumbnails
