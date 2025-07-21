@@ -21,3 +21,4 @@ class Config:
     DBSCAN_EPS: float = float(os.environ.get("DBSCAN_EPS", "0.4"))
     DBSCAN_MIN_SAMPLES: int = int(os.environ.get("DBSCAN_MIN_SAMPLES", "5"))
     FACE_DETECTION_MODEL: str = os.environ.get("FACE_DETECTION_MODEL", "hog")
+    AUTO_CLASSIFY_THRESHOLD: float = float(os.environ.get("AUTO_CLASSIFY_THRESHOLD", "0.3"))

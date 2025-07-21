@@ -114,6 +114,7 @@ environment variables with sensible defaults:
 - `SAVE_CHUNK_SIZE`: how often to save progress (default: 10)
 - `SECRET_KEY`: Flask secret key
 - `FLASK_DEBUG`: run the web UI in debug mode
+- `AUTO_CLASSIFY_THRESHOLD`: distance threshold for automatic face naming (default: 0.3)
 
 ## Database
 

@@ -49,3 +49,30 @@ def test_cluster_faces_updates_ids(tmp_path, monkeypatch):
     ids = {r[0] for r in rows}
     assert None not in ids
     assert len(ids) == 2
+
+
+def test_classify_new_faces_assigns_names(tmp_path, monkeypatch):
+    db_path = setup_temp_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+
+    alice_encs = [np.array([0.0, 0.0]), np.array([0.1, 0.0])]
+    for enc in alice_encs:
+        conn.execute(
+            "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name) VALUES (?, ?, ?, ?, ?)",
+            ("h1", 0, "0,0,0,0", pickle.dumps(enc), "Alice"),
+        )
+
+    unknown = np.array([0.05, 0.02])
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", pickle.dumps(unknown)),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(scanner_module.config, "AUTO_CLASSIFY_THRESHOLD", 0.3)
+    scanner_module.classify_new_faces()
+
+    name = conn.execute(
+        "SELECT person_name FROM faces WHERE file_hash = 'h2'"
+    ).fetchone()[0]
+    assert name == "Alice"
