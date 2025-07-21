@@ -196,3 +196,11 @@ If you encounter database corruption:
 ## Support
 
 [TODO]
+
+## Running Tests
+
+The project includes a small pytest suite. To run it:
+
+```bash
+pytest -q
+```
