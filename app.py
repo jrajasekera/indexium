@@ -13,6 +13,7 @@ from flask import (
     g,
     session,
 )
+
 from config import Config
 
 config = Config()

@@ -1,4 +1,3 @@
-import os
 from util import get_file_hash
 
 def test_get_file_hash_consistent(tmp_path):

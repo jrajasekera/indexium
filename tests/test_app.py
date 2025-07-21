@@ -1,10 +1,10 @@
-import sqlite3
 import pickle
+import sqlite3
 
 import numpy as np
 
-import scanner as scanner_module
 import app as app_module
+import scanner as scanner_module
 
 
 def setup_app_db(tmp_path, monkeypatch):

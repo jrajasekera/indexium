@@ -10,7 +10,6 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 
 from config import Config
-
 from util import get_file_hash
 
 config = Config()

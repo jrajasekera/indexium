@@ -11,6 +11,7 @@ dependencies = [
     "flask==3.0.3",
     "numpy==1.26.4",
     "opencv-python==4.9.0.80",
+    "pytest>=8.4.1",
     "scikit-learn==1.5.0",
     "setuptools>=80.9.0",
 ]
