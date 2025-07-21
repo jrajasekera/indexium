@@ -213,13 +213,26 @@ def scan_videos_parallel(handler):
         print(f"[{processed_count}/{total_files}] File: {filepath} | Hash: {file_hash if file_hash else 'FAILED'}")
 
         if file_hash and file_hash not in scanned_hashes:
-            jobs_to_process.append((filepath, file_hash))
+            # Get file size for sorting
+            try:
+                file_size = os.path.getsize(filepath)
+                jobs_to_process.append((filepath, file_hash, file_size))
+            except OSError as e:
+                print(f"Warning: Could not get size for {filepath}: {e}")
+                # Add with size 0 if we can't get the actual size
+                jobs_to_process.append((filepath, file_hash, 0))
 
     if not jobs_to_process:
         print("No new videos to scan.")
         return
 
-    print(f"Found {len(jobs_to_process)} new videos to process.")
+    # Sort jobs by file size (smallest first)
+    jobs_to_process.sort(key=lambda x: x[2])  # Sort by the file size (third element)
+    print(f"Found {len(jobs_to_process)} new videos to process, sorted by size (smallest first).")
+
+    # Convert back to (filepath, file_hash) tuples for the worker function
+    jobs_to_process = [(filepath, file_hash) for filepath, file_hash, _ in jobs_to_process]
+
     num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
     print(f"Creating a pool of {num_processes} worker processes. Press Ctrl+C to stop gracefully.")
 
