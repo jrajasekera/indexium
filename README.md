@@ -104,11 +104,16 @@ Once you've tagged faces, write the tags to your video files:
 
 ## Configuration
 
-You can modify these settings in `scanner.py`:
+All configuration is centralized in `config.py`. Values are loaded from
+environment variables with sensible defaults:
 
-- `FRAME_SKIP`: How many frames to skip between scans (default: 25)
-- `CPU_CORES_TO_USE`: Number of CPU cores for parallel processing (default: 8)
-- `SAVE_CHUNK_SIZE`: How often to save progress to database (default: 10)
+- `INDEXIUM_VIDEO_DIR`: directory of videos to scan (default: `test_videos`)
+- `INDEXIUM_DB`: path to the SQLite database (default: `video_faces.db`)
+- `FRAME_SKIP`: how many frames to skip between scans (default: 25)
+- `CPU_CORES`: number of CPU cores to use (`None` uses all cores)
+- `SAVE_CHUNK_SIZE`: how often to save progress (default: 10)
+- `SECRET_KEY`: Flask secret key
+- `FLASK_DEBUG`: run the web UI in debug mode
 
 ## Database
 

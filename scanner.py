@@ -9,15 +9,16 @@ import face_recognition
 import numpy as np
 from sklearn.cluster import DBSCAN
 
+from config import Config
+
 from util import get_file_hash
 
-# Directory to store generated face thumbnails
-THUMBNAIL_DIR = "thumbnails"
+config = Config()
 
 
 def save_thumbnail(face_id, video_path, frame_number, location_str):
     """Extracts and saves a thumbnail for a face."""
-    os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+    os.makedirs(config.THUMBNAIL_DIR, exist_ok=True)
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -32,26 +33,18 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
 
         top, right, bottom, left = map(int, location_str.split(','))
         face_img = frame[top:bottom, left:right]
-        thumb_path = os.path.join(THUMBNAIL_DIR, f"{face_id}.jpg")
+        thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{face_id}.jpg")
         cv2.imwrite(thumb_path, face_img)
     except Exception as e:
         print(f"  - [Thumb Error] Failed to create thumbnail for {video_path}: {e}")
 
 # --- CONFIGURATION ---
-# Get video directory from environment variable
-VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
-if VIDEO_DIRECTORY is None:
-    VIDEO_DIRECTORY = "test_videos"  # Default to a test directory if not set
-
-DATABASE_FILE = "video_faces.db"
-# How many frames to skip between face scans. Higher is faster but less thorough.
-FRAME_SKIP = 25
-# Number of CPU cores to use for parallel processing.
-# Set to None to use all available cores.
-CPU_CORES_TO_USE = 8
-# How many videos to process before saving results to the database.
-# A smaller number means more frequent saves but slightly more overhead.
-SAVE_CHUNK_SIZE = 10
+# Load configuration from environment variables
+VIDEO_DIRECTORY = config.VIDEO_DIR
+DATABASE_FILE = config.DATABASE_FILE
+FRAME_SKIP = config.FRAME_SKIP
+CPU_CORES_TO_USE = config.CPU_CORES
+SAVE_CHUNK_SIZE = config.SAVE_CHUNK_SIZE
 
 
 # --- Graceful Shutdown Handler ---
@@ -122,7 +115,9 @@ def process_video_job(job_data):
                 # Convert from BGR (OpenCV) to RGB (face_recognition)
                 rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-                face_locations = face_recognition.face_locations(rgb_frame)
+                face_locations = face_recognition.face_locations(
+                    rgb_frame, model=config.FACE_DETECTION_MODEL
+                )
                 face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
 
                 for location, encoding in zip(face_locations, face_encodings):
@@ -285,7 +280,12 @@ def cluster_faces():
         # DBSCAN parameters:
         # eps: The maximum distance between two samples for one to be considered as in the neighborhood of the other.
         # min_samples: The number of samples in a neighborhood for a point to be considered as a core point.
-        clt = DBSCAN(metric="euclidean", n_jobs=-1, eps=0.4, min_samples=5)
+        clt = DBSCAN(
+            metric="euclidean",
+            n_jobs=-1,
+            eps=config.DBSCAN_EPS,
+            min_samples=config.DBSCAN_MIN_SAMPLES,
+        )
         clt.fit(encodings)
 
         # Get the highest existing cluster_id to ensure new IDs are unique
