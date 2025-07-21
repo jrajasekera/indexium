@@ -1,7 +1,7 @@
 [project]
 name = "indexium"
 version = "0.1.0"
-description = "Add your description here"
+description = "A video face scanning and tagging application."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
