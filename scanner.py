@@ -1,18 +1,44 @@
 import os
+import pickle
+import signal
 import sqlite3
+import sys
+from multiprocessing import Pool, cpu_count
+
 import cv2
 import face_recognition
 import numpy as np
 from sklearn.cluster import DBSCAN
-import pickle
 
 # --- CONFIGURATION ---
-# IMPORTANT: Update these paths before running!
-VIDEO_DIRECTORY = "/mnt/truenas_videos"  # The path where your SMB share is mounted
+# Get video directory from environment variable
+VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
+if VIDEO_DIRECTORY is None:
+    print("Error: INDEXIUM_VIDEO_DIR environment variable not set")
+    print("Please set this variable to the directory containing your videos")
+    sys.exit(1)
+
 DATABASE_FILE = "video_faces.db"
 # How many frames to skip between face scans. Higher is faster but less thorough.
-# A value of 25 means it will process roughly one frame per second for a 25fps video.
 FRAME_SKIP = 25
+# Number of CPU cores to use for parallel processing.
+# Set to None to use all available cores.
+CPU_CORES_TO_USE = 8
+# How many videos to process before saving results to the database.
+# A smaller number means more frequent saves but slightly more overhead.
+SAVE_CHUNK_SIZE = 10
+
+
+# --- Graceful Shutdown Handler ---
+class SignalHandler:
+    """A class to handle shutdown signals gracefully."""
+
+    def __init__(self):
+        self.shutdown_requested = False
+
+    def __call__(self, signum, frame):
+        print(f"\n[Main] Shutdown signal {signum} received. Finishing current tasks and saving...")
+        self.shutdown_requested = True
 
 
 def setup_database():
@@ -20,19 +46,17 @@ def setup_database():
     print("Setting up database...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
-        # Table to track which files have been scanned
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS scanned_files (
                 filepath TEXT PRIMARY KEY
             )
         ''')
-        # Table to store face data
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS faces (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 video_filepath TEXT NOT NULL,
                 frame_number INTEGER NOT NULL,
-                face_location TEXT NOT NULL, -- Storing location as a string "top,right,bottom,left"
+                face_location TEXT NOT NULL,
                 face_encoding BLOB NOT NULL,
                 cluster_id INTEGER DEFAULT NULL,
                 person_name TEXT DEFAULT NULL
@@ -42,146 +66,159 @@ def setup_database():
     print("Database setup complete.")
 
 
-def is_file_scanned(filepath):
-    """Checks the database to see if a video file has already been scanned."""
-    with sqlite3.connect(DATABASE_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM scanned_files WHERE filepath = ?", (filepath,))
-        return cursor.fetchone() is not None
-
-
-def mark_file_as_scanned(filepath):
-    """Marks a file as scanned in the database."""
-    with sqlite3.connect(DATABASE_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO scanned_files (filepath) VALUES (?)", (filepath,))
-        conn.commit()
-
-
-def scan_videos():
+def process_video(video_path):
     """
-    Scans the video directory, processes each video to find faces,
-    and stores their encodings in the database.
+    Worker function to process a single video file.
+    Returns its findings to the main process.
     """
-    print("Starting video scan...")
-    video_files = []
-    for root, _, files in os.walk(VIDEO_DIRECTORY):
-        for file in files:
-            # Add more video extensions if needed
-            if file.lower().endswith(('.mp4', '.mkv', '.mov', '.avi')):
-                video_files.append(os.path.join(root, file))
+    print(f"[Worker] Processing: {video_path}")
+    faces_found_in_video = []
+    try:
+        video_capture = cv2.VideoCapture(video_path)
+        if not video_capture.isOpened():
+            print(f"  - [Worker Error] Could not open video file: {video_path}")
+            return (video_path, False, [])
 
-    print(f"Found {len(video_files)} video files.")
+        frame_count = 0
+        while True:
+            ret, frame = video_capture.read()
+            if not ret: break
+            if frame_count % FRAME_SKIP == 0:
+                small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+                rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+                face_locations = face_recognition.face_locations(rgb_frame)
+                face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+                for location, encoding in zip(face_locations, face_encodings):
+                    top, right, bottom, left = location
+                    location_original = (top * 2, right * 2, bottom * 2, left * 2)
+                    location_str = ",".join(map(str, location_original))
+                    encoding_blob = pickle.dumps(encoding)
+                    faces_found_in_video.append((video_path, frame_count, location_str, encoding_blob))
+            frame_count += 1
+        video_capture.release()
+        print(f"[Worker] Finished {video_path}. Found {len(faces_found_in_video)} faces.")
+        return (video_path, True, faces_found_in_video)
+    except Exception as e:
+        print(f"  - [Worker Error] An error occurred while processing {video_path}: {e}")
+        return (video_path, False, [])
+
+
+def write_data_to_db(face_data, scanned_files):
+    """Writes a chunk of collected data to the SQLite database."""
+    if not face_data and not scanned_files:
+        return
+    print(f"[Main] Saving progress for {len(scanned_files)} videos and {len(face_data)} faces...")
+    try:
+        with sqlite3.connect(DATABASE_FILE, timeout=30) as conn:
+            cursor = conn.cursor()
+            if face_data:
+                cursor.executemany(
+                    'INSERT INTO faces (video_filepath, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)',
+                    face_data
+                )
+            if scanned_files:
+                cursor.executemany(
+                    'INSERT INTO scanned_files (filepath) VALUES (?)',
+                    scanned_files
+                )
+            conn.commit()
+        print("[Main] Save complete.")
+    except Exception as e:
+        print(f"[Main] DATABASE ERROR during save: {e}")
+
+
+def scan_videos_parallel(handler):
+    """
+    Scans videos in parallel, collecting results and saving them in chunks.
+    """
+    print("Starting parallel video scan...")
+    all_video_files = [os.path.join(r, f) for r, _, fs in os.walk(VIDEO_DIRECTORY) for f in fs if
+                       f.lower().endswith(('.mp4', '.mkv', '.mov', '.avi'))]
 
     with sqlite3.connect(DATABASE_FILE) as conn:
-        cursor = conn.cursor()
-        for i, video_path in enumerate(video_files):
-            if is_file_scanned(video_path):
-                print(f"({i + 1}/{len(video_files)}) Skipping already scanned file: {video_path}")
-                continue
+        scanned_files = {row[0] for row in conn.execute("SELECT filepath FROM scanned_files")}
 
-            print(f"({i + 1}/{len(video_files)}) Processing: {video_path}")
-            try:
-                video_capture = cv2.VideoCapture(video_path)
-                if not video_capture.isOpened():
-                    print(f"  - Error: Could not open video file.")
-                    continue
+    files_to_process = [f for f in all_video_files if f not in scanned_files]
+    if not files_to_process:
+        print("No new videos to scan.")
+        return
 
-                frame_count = 0
-                faces_found_in_video = 0
-                while True:
-                    ret, frame = video_capture.read()
-                    if not ret:
-                        break  # End of video
+    print(f"Found {len(files_to_process)} new videos to process out of {len(all_video_files)} total.")
+    num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
+    print(f"Creating a pool of {num_processes} worker processes. Press Ctrl+C to stop gracefully.")
 
-                    # Only process every Nth frame
-                    if frame_count % FRAME_SKIP == 0:
-                        # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
-                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pending_faces = []
+    pending_files = []
 
-                        # Find all the faces and their encodings in the current frame
-                        face_locations = face_recognition.face_locations(rgb_frame)
-                        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+    with Pool(processes=num_processes) as pool:
+        # Use imap_unordered to get results as they are completed
+        results_iterator = pool.imap_unordered(process_video, files_to_process)
 
-                        for location, encoding in zip(face_locations, face_encodings):
-                            # Serialize data for storage
-                            location_str = ",".join(map(str, location))
-                            encoding_blob = pickle.dumps(encoding)
+        for video_path, success, faces_list in results_iterator:
+            if handler.shutdown_requested:
+                break  # Exit the loop if shutdown is requested
 
-                            cursor.execute('''
-                                INSERT INTO faces (video_filepath, frame_number, face_location, face_encoding)
-                                VALUES (?, ?, ?, ?)
-                            ''', (video_path, frame_count, location_str, encoding_blob))
-                            faces_found_in_video += 1
+            if success:
+                pending_files.append((video_path,))
+                pending_faces.extend(faces_list)
+            else:
+                print(f"[Main] Failed to process: {video_path}")
 
-                    frame_count += 1
+            # Save to DB when chunk size is reached
+            if len(pending_files) >= SAVE_CHUNK_SIZE:
+                write_data_to_db(pending_faces, pending_files)
+                pending_faces, pending_files = [], []  # Reset chunks
 
-                video_capture.release()
-                conn.commit()
-                mark_file_as_scanned(video_path)
-                print(f"  - Finished. Found {faces_found_in_video} faces.")
-
-            except Exception as e:
-                print(f"  - An error occurred while processing {video_path}: {e}")
-
-    print("Video scanning complete.")
+    # After the loop (or on shutdown), save any remaining data
+    print("[Main] All workers finished or shutdown initiated. Performing final save.")
+    write_data_to_db(pending_faces, pending_files)
+    print("Parallel video scanning complete.")
 
 
 def cluster_faces():
     """
     Fetches all face encodings from the database and uses DBSCAN to group them.
-    Updates the database with the cluster ID for each face.
     """
     print("Starting face clustering...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
-        # Fetch only faces that haven't been clustered yet
-        cursor.execute("SELECT id, face_encoding FROM faces WHERE cluster_id IS NULL")
-        rows = cursor.fetchall()
-
+        rows = cursor.execute("SELECT id, face_encoding FROM faces WHERE cluster_id IS NULL").fetchall()
         if not rows:
             print("No new faces to cluster.")
             return
 
         print(f"Found {len(rows)} new faces to cluster.")
-
         face_ids = [row[0] for row in rows]
-        # Deserialize the encodings
         encodings = [pickle.loads(row[1]) for row in rows]
 
-        # Use DBSCAN to find clusters of faces
-        # The `eps` parameter is the most important setting. It's the maximum distance
-        # between two samples for one to be considered as in the neighborhood of the other.
-        # This may require some tuning based on your specific videos. 0.4 is a good start.
-        # `min_samples` is the number of samples in a neighborhood for a point to be considered as a core point.
         clt = DBSCAN(metric="euclidean", n_jobs=-1, eps=0.4, min_samples=5)
         clt.fit(encodings)
 
-        # Get the highest existing cluster_id to not reuse IDs
-        cursor.execute("SELECT MAX(cluster_id) FROM faces")
-        max_cluster_id = cursor.fetchone()[0]
-        if max_cluster_id is None:
-            max_cluster_id = 0
-
+        max_cluster_id = cursor.execute("SELECT MAX(cluster_id) FROM faces").fetchone()[0] or 0
         label_offset = max_cluster_id + 1
 
         print(f"Clustering complete. Found {len(np.unique(clt.labels_))} unique groups (including noise).")
+        updates = [(int(label) + label_offset if label != -1 else None, face_id) for face_id, label in
+                   zip(face_ids, clt.labels_)]
 
-        # Update the database with the new cluster IDs
-        for face_id, label in zip(face_ids, clt.labels_):
-            # We label noise points (-1) as NULL so we can potentially re-cluster them later
-            if label == -1:
-                cluster_id = None
-            else:
-                cluster_id = int(label) + label_offset
-
-            cursor.execute("UPDATE faces SET cluster_id = ? WHERE id = ?", (cluster_id, face_id))
-
+        cursor.executemany("UPDATE faces SET cluster_id = ? WHERE id = ?", updates)
         conn.commit()
     print("Face clustering complete.")
 
 
 if __name__ == "__main__":
+    # Set up the signal handler
+    handler = SignalHandler()
+    signal.signal(signal.SIGINT, handler)  # Catches Ctrl+C
+    signal.signal(signal.SIGTERM, handler)  # Catches standard termination signal
+
     setup_database()
-    scan_videos()
-    cluster_faces()
+    scan_videos_parallel(handler)
+
+    # Only run clustering if the process wasn't interrupted
+    if not handler.shutdown_requested:
+        cluster_faces()
+    else:
+        print("[Main] Clustering skipped due to script interruption.")
+
+    print("[Main] Program finished.")

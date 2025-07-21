@@ -1,15 +1,20 @@
-from flask import Flask, render_template_string, request, redirect, url_for, Response
-import sqlite3
-import cv2
-import pickle
 import os
+import sqlite3
+import sys
+
+import cv2
 import ffmpeg
+from flask import Flask, render_template_string, request, redirect, url_for, Response
 
 # --- CONFIGURATION ---
+# Get video directory from environment variable
+VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
+if VIDEO_DIRECTORY is None:
+    print("Error: INDEXIUM_VIDEO_DIR environment variable not set")
+    print("Please set this variable to the directory containing your videos")
+    sys.exit(1)
+
 DATABASE_FILE = "video_faces.db"
-# This should be the same path you used in scanner.py
-# The web app needs it to access the videos for thumbnail generation.
-VIDEO_DIRECTORY = "/mnt/jude/stuff/raw_videos"
 
 app = Flask(__name__)
 
