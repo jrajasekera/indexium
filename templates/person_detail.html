@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}Details for {{ person_name }}{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto bg-white rounded-lg shadow-md p-6">
+    <h2 class="font-semibold text-3xl mb-2 text-center">{{ person_name }}</h2>
+    <p class="text-center text-gray-500 mb-6">{{ faces|length }} faces found for this person.</p>
+
+    <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg max-h-96 overflow-y-auto">
+        {% for face in faces %}
+            <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face of {{ person_name }}" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow">
+        {% endfor %}
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t pt-6">
+        <!-- Rename Form -->
+        <form action="{{ url_for('rename_person', old_name=person_name) }}" method="post">
+            <h3 class="font-semibold text-lg mb-2">Rename Person</h3>
+            <div class="flex gap-2">
+                <input type="text" name="new_name" placeholder="Enter new name..." class="flex-grow p-2 border border-gray-300 rounded-md" required>
+                <button type="submit" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700">Rename</button>
+            </div>
+        </form>
+
+        <!-- Other Actions -->
+        <div>
+            <h3 class="font-semibold text-lg mb-2">Other Actions</h3>
+            <div class="flex gap-4">
+                <form action="{{ url_for('unname_person') }}" method="post" onsubmit="return confirm('Are you sure you want to un-name this group? It will be sent back to the tagging queue.');">
+                    <input type="hidden" name="person_name" value="{{ person_name }}">
+                    <button type="submit" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Un-name Group</button>
+                </form>
+                <form action="{{ url_for('delete_cluster_by_name') }}" method="post" onsubmit="return confirm('Are you sure you want to permanently delete this person and all their face data?');">
+                    <input type="hidden" name="person_name" value="{{ person_name }}">
+                    <button type="submit" class="bg-red-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-700">Delete Person</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -3,7 +3,7 @@ import sqlite3
 import sys
 
 import ffmpeg
-from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, g
 
 # --- CONFIGURATION ---
 # Get video directory from environment variable
@@ -21,399 +21,22 @@ app = Flask(__name__)
 # Flask needs a secret key to use flash messages
 app.secret_key = os.urandom(24)
 
-# --- HTML TEMPLATES ---
-
-# Base template with navigation and progress stats
-BASE_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Video Face Tagger{% endblock %}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> 
-        body { font-family: 'Inter', sans-serif; } 
-        .face-checkbox:checked + img {
-            border: 4px solid #3b82f6; /* blue-500 */
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-        }
-    </style>
-</head>
-<body class="bg-gray-100 text-gray-800">
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="container mx-auto p-4 flex justify-between items-center">
-            <nav class="flex items-center gap-6">
-                <a href="{{ url_for('index') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Home</a>
-                <a href="{{ url_for('list_people') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Review People</a>
-            </nav>
-            <div class="text-center">
-                <span class="font-semibold">{{ stats.named_people_count }}</span> People Identified | 
-                <span class="font-semibold">{{ stats.unnamed_groups_count }}</span> Groups Remaining
-            </div>
-            <form action="/write_metadata" method="post" onsubmit="return confirm('This will read and write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                <button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors">
-                    Write All Named Tags
-                </button>
-            </form>
-        </div>
-    </header>
-    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="mb-4 p-4 rounded-md {% if category == 'success' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                    {{ message }}
-                </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        {% block content %}{% endblock %}
-    </main>
-</body>
-</html>
-'''
-
-GROUP_TAGGER_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tag Group #{{ cluster.id }}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> 
-        body { font-family: 'Inter', sans-serif; } 
-        .face-checkbox:checked + img {
-            border: 4px solid #3b82f6; /* blue-500 */
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-        }
-    </style>
-</head>
-<body class="bg-gray-100 text-gray-800">
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="container mx-auto p-4 flex justify-between items-center">
-            <nav class="flex items-center gap-6">
-                <a href="{{ url_for('index') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Home</a>
-                <a href="{{ url_for('list_people') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Review People</a>
-            </nav>
-            <div class="text-center">
-                <span class="font-semibold">{{ stats.named_people_count }}</span> People Identified | 
-                <span class="font-semibold">{{ stats.unnamed_groups_count }}</span> Groups Remaining
-            </div>
-            <form action="/write_metadata" method="post" onsubmit="return confirm('This will read and write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                <button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors">
-                    Write All Named Tags
-                </button>
-            </form>
-        </div>
-    </header>
-    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="mb-4 p-4 rounded-md {% if category == 'success' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                    {{ message }}
-                </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <div class="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
-            <h2 class="font-semibold text-2xl mb-4 text-center">Who is this? (Group #{{ cluster.id }})</h2>
-
-            <form id="face-selection-form" action="{{ url_for('split_cluster') }}" method="post">
-                <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-                <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg">
-                    {% for face in cluster.faces %}
-                        <label class="cursor-pointer">
-                            <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
-                            <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face from video" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow transition-all">
-                        </label>
-                    {% else %}
-                        <p>No faces found for this group. It may have been an error.</p>
-                    {% endfor %}
-                </div>
-                <div class="text-center mb-6">
-                    <button type="submit" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Split Selected Faces into New Group</button>
-                </div>
-            </form>
-
-            <!-- Naming Form -->
-            <form action="{{ url_for('name_cluster') }}" method="post" class="mb-4 border-t pt-4">
-                <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-                <label for="person_name" class="block text-sm font-medium text-gray-700 mb-1">Name this entire group:</label>
-                <div class="flex gap-2">
-                    <input list="existing-names" id="person_name" name="person_name" placeholder="Enter or select a name..." class="flex-grow p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required autocomplete="off">
-                    <datalist id="existing-names">
-                        {% for name in existing_names %}
-                            <option value="{{ name }}">
-                        {% endfor %}
-                    </datalist>
-                    <button type="submit" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700">Save Name</button>
-                </div>
-            </form>
-
-            <!-- Merge Form -->
-            <form action="{{ url_for('merge_clusters') }}" method="post" class="mb-4">
-                <input type="hidden" name="from_cluster_id" value="{{ cluster.id }}">
-                <label for="merge_target" class="block text-sm font-medium text-gray-700 mb-1">Or merge this group with an existing person:</label>
-                <div class="flex gap-2">
-                    <select name="to_person_name" id="merge_target" class="flex-grow p-2 border border-gray-300 rounded-md">
-                        <option disabled selected>Select person to merge with...</option>
-                        {% for name in existing_names %}
-                            <option value="{{ name }}">{{ name }}</option>
-                        {% endfor %}
-                    </select>
-                    <button type="submit" class="bg-purple-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-purple-700">Merge</button>
-                </div>
-            </form>
-
-            <!-- Actions -->
-            <div class="flex justify-between items-center mt-6 border-t pt-4">
-                <form action="{{ url_for('delete_cluster') }}" method="post" onsubmit="return confirm('Are you sure you want to permanently delete this group? This cannot be undone.');">
-                    <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-                    <button type="submit" class="text-sm text-red-600 hover:text-red-800">Delete Group</button>
-                </form>
-                <a href="{{ url_for('skip_cluster', cluster_id=cluster.id) }}" class="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">Skip →</a>
-            </div>
-        </div>
-    </main>
-</body>
-</html>
-'''
-
-ALL_DONE_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>All Done!</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> 
-        body { font-family: 'Inter', sans-serif; } 
-        .face-checkbox:checked + img {
-            border: 4px solid #3b82f6; /* blue-500 */
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-        }
-    </style>
-</head>
-<body class="bg-gray-100 text-gray-800">
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="container mx-auto p-4 flex justify-between items-center">
-            <nav class="flex items-center gap-6">
-                <a href="{{ url_for('index') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Home</a>
-                <a href="{{ url_for('list_people') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Review People</a>
-            </nav>
-            <div class="text-center">
-                <span class="font-semibold">{{ stats.named_people_count }}</span> People Identified | 
-                <span class="font-semibold">{{ stats.unnamed_groups_count }}</span> Groups Remaining
-            </div>
-            <form action="/write_metadata" method="post" onsubmit="return confirm('This will read and write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                <button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors">
-                    Write All Named Tags
-                </button>
-            </form>
-        </div>
-    </header>
-    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="mb-4 p-4 rounded-md {% if category == 'success' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                    {{ message }}
-                </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <div class="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md text-center">
-            <h2 class="text-3xl font-semibold text-green-600">All Done!</h2>
-            <p class="mt-4 text-gray-600">No more unnamed face groups found. You can run the scanner again, review the people you've already tagged, or write the tags to your video files.</p>
-            <div class="mt-8 flex flex-col gap-4">
-                <a href="{{ url_for('list_people') }}" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700">Review Named People</a>
-                <form action="/write_metadata" method="post" onsubmit="return confirm('This will write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                    <button type="submit" class="w-full bg-green-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-green-700">
-                        Write All Named Tags to Files
-                    </button>
-                </form>
-            </div>
-        </div>
-    </main>
-</body>
-</html>
-'''
-
-PEOPLE_LIST_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>All Identified People</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> 
-        body { font-family: 'Inter', sans-serif; } 
-        .face-checkbox:checked + img {
-            border: 4px solid #3b82f6; /* blue-500 */
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-        }
-    </style>
-</head>
-<body class="bg-gray-100 text-gray-800">
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="container mx-auto p-4 flex justify-between items-center">
-            <nav class="flex items-center gap-6">
-                <a href="{{ url_for('index') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Home</a>
-                <a href="{{ url_for('list_people') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Review People</a>
-            </nav>
-            <div class="text-center">
-                <span class="font-semibold">{{ stats.named_people_count }}</span> People Identified | 
-                <span class="font-semibold">{{ stats.unnamed_groups_count }}</span> Groups Remaining
-            </div>
-            <form action="/write_metadata" method="post" onsubmit="return confirm('This will read and write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                <button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors">
-                    Write All Named Tags
-                </button>
-            </form>
-        </div>
-    </header>
-    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="mb-4 p-4 rounded-md {% if category == 'success' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                    {{ message }}
-                </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <div class="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
-            <h2 class="font-semibold text-2xl mb-6 text-center">Identified People ({{ people|length }})</h2>
-            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {% for person in people %}
-                <a href="{{ url_for('person_details', person_name=person.person_name) }}" class="block text-center p-2 bg-gray-50 rounded-lg hover:bg-blue-100 hover:shadow-lg transition-all">
-                    <img src="{{ url_for('get_face_thumbnail', face_id=person.face_id) }}" alt="Face of {{ person.person_name }}" class="w-24 h-24 object-cover rounded-full mx-auto mb-2 shadow-md">
-                    <p class="font-semibold text-gray-800 truncate">{{ person.person_name }}</p>
-                    <p class="text-sm text-gray-500">{{ person.face_count }} faces</p>
-                </a>
-                {% else %}
-                <p class="col-span-full text-center text-gray-500">No people have been named yet.</p>
-                {% endfor %}
-            </div>
-        </div>
-    </main>
-</body>
-</html>
-'''
-
-PERSON_DETAIL_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Details for {{ person_name }}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> 
-        body { font-family: 'Inter', sans-serif; } 
-        .face-checkbox:checked + img {
-            border: 4px solid #3b82f6; /* blue-500 */
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-        }
-    </style>
-</head>
-<body class="bg-gray-100 text-gray-800">
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="container mx-auto p-4 flex justify-between items-center">
-            <nav class="flex items-center gap-6">
-                <a href="{{ url_for('index') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Home</a>
-                <a href="{{ url_for('list_people') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Review People</a>
-            </nav>
-            <div class="text-center">
-                <span class="font-semibold">{{ stats.named_people_count }}</span> People Identified | 
-                <span class="font-semibold">{{ stats.unnamed_groups_count }}</span> Groups Remaining
-            </div>
-            <form action="/write_metadata" method="post" onsubmit="return confirm('This will read and write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                <button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors">
-                    Write All Named Tags
-                </button>
-            </form>
-        </div>
-    </header>
-    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="mb-4 p-4 rounded-md {% if category == 'success' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                    {{ message }}
-                </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <div class="max-w-5xl mx-auto bg-white rounded-lg shadow-md p-6">
-            <h2 class="font-semibold text-3xl mb-2 text-center">{{ person_name }}</h2>
-            <p class="text-center text-gray-500 mb-6">{{ faces|length }} faces found for this person.</p>
-
-            <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg max-h-96 overflow-y-auto">
-                {% for face in faces %}
-                    <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face of {{ person_name }}" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow">
-                {% endfor %}
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t pt-6">
-                <!-- Rename Form -->
-                <form action="{{ url_for('rename_person', old_name=person_name) }}" method="post">
-                    <h3 class="font-semibold text-lg mb-2">Rename Person</h3>
-                    <div class="flex gap-2">
-                        <input type="text" name="new_name" placeholder="Enter new name..." class="flex-grow p-2 border border-gray-300 rounded-md" required>
-                        <button type="submit" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700">Rename</button>
-                    </div>
-                </form>
-
-                <!-- Other Actions -->
-                <div>
-                    <h3 class="font-semibold text-lg mb-2">Other Actions</h3>
-                    <div class="flex gap-4">
-                        <form action="{{ url_for('unname_person') }}" method="post" onsubmit="return confirm('Are you sure you want to un-name this group? It will be sent back to the tagging queue.');">
-                            <input type="hidden" name="person_name" value="{{ person_name }}">
-                            <button type="submit" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Un-name Group</button>
-                        </form>
-                        <form action="{{ url_for('delete_cluster_by_name') }}" method="post" onsubmit="return confirm('Are you sure you want to permanently delete this person and all their face data?');">
-                            <input type="hidden" name="person_name" value="{{ person_name }}">
-                            <button type="submit" class="bg-red-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-700">Delete Person</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </main>
-</body>
-</html>
-'''
-
-
 # --- DATABASE & HELPERS ---
 
 def get_db_connection():
-    """Creates a database connection."""
-    conn = sqlite3.connect(DATABASE_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Gets a per-request database connection."""
+    if "db" not in g:
+        g.db = sqlite3.connect(DATABASE_FILE)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db_connection(exception):
+    """Closes the database connection at the end of the request."""
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
 
 def get_progress_stats():
@@ -429,7 +52,6 @@ def get_progress_stats():
         FROM faces 
         WHERE person_name IS NOT NULL
     ''').fetchone()['count']
-    conn.close()
     return {
         "unnamed_groups_count": unnamed_groups_count,
         "named_people_count": named_people_count
@@ -453,13 +75,12 @@ def index():
         FROM faces
         WHERE cluster_id IS NOT NULL AND person_name IS NULL
     ''').fetchone()
-    conn.close()
 
     if next_group and next_group['id'] is not None:
         return redirect(url_for('tag_group', cluster_id=next_group['id']))
     else:
         # No more groups to name, show a completion page
-        return render_template_string(ALL_DONE_TEMPLATE, BASE_TEMPLATE=BASE_TEMPLATE)
+        return render_template('all_done.html')
 
 
 @app.route('/group/<int:cluster_id>')
@@ -474,12 +95,10 @@ def tag_group(cluster_id):
 
     names = conn.execute(
         'SELECT DISTINCT person_name FROM faces WHERE person_name IS NOT NULL ORDER BY person_name').fetchall()
-    conn.close()
 
     existing_names = [name['person_name'] for name in names]
     cluster_data = {'id': cluster_id, 'faces': sample_faces}
-    return render_template_string(GROUP_TAGGER_TEMPLATE, BASE_TEMPLATE=BASE_TEMPLATE, cluster=cluster_data,
-                                  existing_names=existing_names)
+    return render_template('group_tagger.html', cluster=cluster_data, existing_names=existing_names)
 
 
 @app.route('/face_thumbnail/<int:face_id>')
@@ -501,7 +120,6 @@ def name_cluster():
         conn = get_db_connection()
         conn.execute('UPDATE faces SET person_name = ? WHERE cluster_id = ?', (person_name, cluster_id))
         conn.commit()
-        conn.close()
         flash(f"Assigned name '{person_name}' to cluster #{cluster_id}", "success")
     return redirect(url_for('index'))
 
@@ -514,7 +132,6 @@ def delete_cluster():
         conn = get_db_connection()
         conn.execute('DELETE FROM faces WHERE cluster_id = ?', (cluster_id,))
         conn.commit()
-        conn.close()
         flash(f"Deleted all faces for cluster #{cluster_id}", "success")
     return redirect(url_for('index'))
 
@@ -528,7 +145,6 @@ def skip_cluster(cluster_id):
         FROM faces
         WHERE cluster_id > ? AND cluster_id IS NOT NULL AND person_name IS NULL
     ''', (cluster_id,)).fetchone()
-    conn.close()
 
     if next_group and next_group['id'] is not None:
         return redirect(url_for('tag_group', cluster_id=next_group['id']))
@@ -599,7 +215,6 @@ def write_metadata():
             print(f"  - FFMPEG WRITE ERROR for file {video_path}: {e}")
             if os.path.exists(output_path): os.remove(output_path)
 
-    conn.close()
     flash(f"Metadata writing complete. Updated {tagged_count} files.", "success")
     return redirect(url_for('index'))
 
@@ -622,8 +237,7 @@ def list_people():
         JOIN faces f ON p.min_face_id = f.id
         ORDER BY p.person_name
     ''').fetchall()
-    conn.close()
-    return render_template_string(PEOPLE_LIST_TEMPLATE, BASE_TEMPLATE=BASE_TEMPLATE, people=people)
+    return render_template('people_list.html', people=people)
 
 
 @app.route('/person/<person_name>')
@@ -631,12 +245,10 @@ def person_details(person_name):
     """Shows all faces for one person and provides editing tools."""
     conn = get_db_connection()
     faces = conn.execute('SELECT id FROM faces WHERE person_name = ?', (person_name,)).fetchall()
-    conn.close()
     if not faces:
         flash(f"Person '{person_name}' not found.", "error")
         return redirect(url_for('list_people'))
-    return render_template_string(PERSON_DETAIL_TEMPLATE, BASE_TEMPLATE=BASE_TEMPLATE, person_name=person_name,
-                                  faces=faces)
+    return render_template('person_detail.html', person_name=person_name, faces=faces)
 
 
 @app.route('/rename_person/<old_name>', methods=['POST'])
@@ -646,7 +258,6 @@ def rename_person(old_name):
         conn = get_db_connection()
         conn.execute('UPDATE faces SET person_name = ? WHERE person_name = ?', (new_name, old_name))
         conn.commit()
-        conn.close()
         flash(f"Renamed '{old_name}' to '{new_name}'.", "success")
         return redirect(url_for('person_details', person_name=new_name))
     else:
@@ -660,7 +271,6 @@ def unname_person():
     conn = get_db_connection()
     conn.execute('UPDATE faces SET person_name = NULL WHERE person_name = ?', (person_name,))
     conn.commit()
-    conn.close()
     flash(f"'{person_name}' has been un-named and their group is back in the queue.", "success")
     return redirect(url_for('list_people'))
 
@@ -672,7 +282,6 @@ def delete_cluster_by_name():
     # This is safer than deleting by cluster_id, as a person might be a result of merges
     conn.execute('DELETE FROM faces WHERE person_name = ?', (person_name,))
     conn.commit()
-    conn.close()
     flash(f"Deleted person '{person_name}' and all their face data.", "success")
     return redirect(url_for('list_people'))
 
@@ -693,7 +302,6 @@ def merge_clusters():
     target_cluster = conn.execute('SELECT cluster_id FROM faces WHERE person_name = ? LIMIT 1',
                                   (to_person_name,)).fetchone()
     if not target_cluster:
-        conn.close()
         flash(f"Could not find target person '{to_person_name}'.", "error")
         return redirect(url_for('tag_group', cluster_id=from_cluster_id))
 
@@ -703,7 +311,6 @@ def merge_clusters():
     conn.execute('UPDATE faces SET cluster_id = ?, person_name = ? WHERE cluster_id = ?',
                  (to_cluster_id, to_person_name, from_cluster_id))
     conn.commit()
-    conn.close()
 
     flash(f"Successfully merged group #{from_cluster_id} into '{to_person_name}'.", "success")
     return redirect(url_for('index'))
@@ -730,7 +337,6 @@ def split_cluster():
     params = [new_cluster_id] + face_ids_to_split
     conn.execute(query, params)
     conn.commit()
-    conn.close()
 
     flash(
         f"Successfully split {len(face_ids_to_split)} faces from group #{original_cluster_id} into new group #{new_cluster_id}.",
