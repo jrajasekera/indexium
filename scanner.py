@@ -12,6 +12,32 @@ from sklearn.cluster import DBSCAN
 
 from util import get_file_hash
 
+# Directory to store generated face thumbnails
+THUMBNAIL_DIR = "thumbnails"
+
+
+def save_thumbnail(face_id, video_path, frame_number, location_str):
+    """Extracts and saves a thumbnail for a face."""
+    os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"  - [Thumb Error] Could not open video {video_path}")
+            return
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret, frame = cap.read()
+        cap.release()
+        if not ret:
+            print(f"  - [Thumb Error] Could not read frame {frame_number} from {video_path}")
+            return
+
+        top, right, bottom, left = map(int, location_str.split(','))
+        face_img = frame[top:bottom, left:right]
+        thumb_path = os.path.join(THUMBNAIL_DIR, f"{face_id}.jpg")
+        cv2.imwrite(thumb_path, face_img)
+    except Exception as e:
+        print(f"  - [Thumb Error] Failed to create thumbnail for {video_path}: {e}")
+
 # --- CONFIGURATION ---
 # Get video directory from environment variable
 VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
@@ -120,26 +146,36 @@ def process_video_job(job_data):
 
 
 def write_data_to_db(face_data, scanned_files_info):
-    """Writes a chunk of collected data to the SQLite database."""
+    """Writes a chunk of collected data to the SQLite database and saves thumbnails."""
     if not face_data and not scanned_files_info:
         return
-    print(f"[Main] Saving progress for {len(scanned_files_info)} videos and {len(face_data)} faces...")
+    print(
+        f"[Main] Saving progress for {len(scanned_files_info)} videos and {len(face_data)} faces..."
+    )
     try:
         with sqlite3.connect(DATABASE_FILE, timeout=30) as conn:
             cursor = conn.cursor()
-            if face_data:
-                # Face data now includes the file_hash
-                cursor.executemany(
-                    'INSERT INTO faces (file_hash, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)',
-                    face_data
-                )
+
+            # Map hashes to paths for thumbnail generation
+            file_map = {h: p for h, p in scanned_files_info}
+
             if scanned_files_info:
-                # Scanned files info is a list of (hash, path) tuples
-                # Use REPLACE to handle cases where a file was moved and we just need to update its path
                 cursor.executemany(
                     'REPLACE INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)',
-                    scanned_files_info
+                    scanned_files_info,
                 )
+
+            if face_data:
+                for file_hash, frame_number, loc_str, enc_blob in face_data:
+                    cursor.execute(
+                        'INSERT INTO faces (file_hash, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)',
+                        (file_hash, frame_number, loc_str, enc_blob),
+                    )
+                    face_id = cursor.lastrowid
+                    video_path = file_map.get(file_hash)
+                    if video_path:
+                        save_thumbnail(face_id, video_path, frame_number, loc_str)
+
             conn.commit()
         print("[Main] Save complete.")
     except Exception as e:
