@@ -2,9 +2,8 @@ import os
 import sqlite3
 import sys
 
-import cv2
 import ffmpeg
-from flask import Flask, render_template_string, request, redirect, url_for, Response, flash
+from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file
 
 # --- CONFIGURATION ---
 # Get video directory from environment variable
@@ -15,6 +14,8 @@ if VIDEO_DIRECTORY is None:
     sys.exit(1)
 
 DATABASE_FILE = "video_faces.db"
+# Directory containing cached face thumbnails
+THUMBNAIL_DIR = "thumbnails"
 
 app = Flask(__name__)
 # Flask needs a secret key to use flash messages
@@ -483,34 +484,11 @@ def tag_group(cluster_id):
 
 @app.route('/face_thumbnail/<int:face_id>')
 def get_face_thumbnail(face_id):
-    """Dynamically generates a cropped thumbnail image for a given face ID."""
-    conn = get_db_connection()
-    face_data = conn.execute('''
-        SELECT f.frame_number, f.face_location, s.last_known_filepath
-        FROM faces f JOIN scanned_files s ON f.file_hash = s.file_hash
-        WHERE f.id = ?
-    ''', (face_id,)).fetchone()
-    conn.close()
-
-    if not face_data: return "Face or associated file not found", 404
-    video_path = face_data['last_known_filepath']
-    if not os.path.exists(video_path): return f"Video file not found: {video_path}", 404
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened(): return "Could not open video", 500
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, face_data['frame_number'])
-    ret, frame = cap.read()
-    cap.release()
-
-    if not ret: return "Could not read frame", 500
-
-    top, right, bottom, left = map(int, face_data['face_location'].split(','))
-    face_image = frame[top:bottom, left:right]
-    ret, buffer = cv2.imencode('.jpg', face_image)
-    if not ret: return "Could not encode image", 500
-
-    return Response(buffer.tobytes(), mimetype='image/jpeg')
+    """Serves a pre-generated face thumbnail."""
+    thumb_path = os.path.join(THUMBNAIL_DIR, f"{face_id}.jpg")
+    if os.path.exists(thumb_path):
+        return send_file(thumb_path, mimetype='image/jpeg')
+    return "Thumbnail not found", 404
 
 
 @app.route('/name_cluster', methods=['POST'])
