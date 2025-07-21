@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block title %}Tag Group #{{ cluster.id }}{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
+    <h2 class="font-semibold text-2xl mb-4 text-center">Who is this? (Group #{{ cluster.id }})</h2>
+
+    <form id="face-selection-form" action="{{ url_for('split_cluster') }}" method="post">
+        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+        <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg">
+            {% for face in cluster.faces %}
+                <label class="cursor-pointer">
+                    <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
+                    <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face from video" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow transition-all">
+                </label>
+            {% else %}
+                <p>No faces found for this group. It may have been an error.</p>
+            {% endfor %}
+        </div>
+        <div class="text-center mb-6">
+            <button type="submit" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Split Selected Faces into New Group</button>
+        </div>
+    </form>
+
+    <!-- Naming Form -->
+    <form action="{{ url_for('name_cluster') }}" method="post" class="mb-4 border-t pt-4">
+        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+        <label for="person_name" class="block text-sm font-medium text-gray-700 mb-1">Name this entire group:</label>
+        <div class="flex gap-2">
+            <input list="existing-names" id="person_name" name="person_name" placeholder="Enter or select a name..." class="flex-grow p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required autocomplete="off">
+            <datalist id="existing-names">
+                {% for name in existing_names %}
+                    <option value="{{ name }}">
+                {% endfor %}
+            </datalist>
+            <button type="submit" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700">Save Name</button>
+        </div>
+    </form>
+
+    <!-- Merge Form -->
+    <form action="{{ url_for('merge_clusters') }}" method="post" class="mb-4">
+        <input type="hidden" name="from_cluster_id" value="{{ cluster.id }}">
+        <label for="merge_target" class="block text-sm font-medium text-gray-700 mb-1">Or merge this group with an existing person:</label>
+        <div class="flex gap-2">
+            <select name="to_person_name" id="merge_target" class="flex-grow p-2 border border-gray-300 rounded-md">
+                <option disabled selected>Select person to merge with...</option>
+                {% for name in existing_names %}
+                    <option value="{{ name }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="bg-purple-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-purple-700">Merge</button>
+        </div>
+    </form>
+
+    <!-- Actions -->
+    <div class="flex justify-between items-center mt-6 border-t pt-4">
+        <form action="{{ url_for('delete_cluster') }}" method="post" onsubmit="return confirm('Are you sure you want to permanently delete this group? This cannot be undone.');">
+            <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+            <button type="submit" class="text-sm text-red-600 hover:text-red-800">Delete Group</button>
+        </form>
+        <a href="{{ url_for('skip_cluster', cluster_id=cluster.id) }}" class="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">Skip →</a>
+    </div>
+</div>
+{% endblock %}

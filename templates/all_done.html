@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}All Done!{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md text-center">
+    <h2 class="text-3xl font-semibold text-green-600">All Done!</h2>
+    <p class="mt-4 text-gray-600">No more unnamed face groups found. You can run the scanner again, review the people you've already tagged, or write the tags to your video files.</p>
+    <div class="mt-8 flex flex-col gap-4">
+        <a href="{{ url_for('list_people') }}" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700">Review Named People</a>
+        <form action="/write_metadata" method="post" onsubmit="return confirm('This will write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
+            <button type="submit" class="w-full bg-green-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-green-700">
+                Write All Named Tags to Files
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
