@@ -2,28 +2,31 @@ import os
 import sqlite3
 
 import ffmpeg
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, g, session
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash,
+    send_file,
+    g,
+    session,
+)
+from config import Config
 
-# --- CONFIGURATION ---
-# Get video directory from environment variable
-VIDEO_DIRECTORY = os.environ.get("INDEXIUM_VIDEO_DIR")
-if VIDEO_DIRECTORY is None:
-    VIDEO_DIRECTORY = "test_videos"  # Default to a test directory if not set
-
-DATABASE_FILE = "video_faces.db"
-# Directory containing cached face thumbnails
-THUMBNAIL_DIR = "thumbnails"
+config = Config()
 
 app = Flask(__name__)
 # Flask needs a secret key to use flash messages
-app.secret_key = os.urandom(24)
+app.secret_key = config.SECRET_KEY
 
 # --- DATABASE & HELPERS ---
 
 def get_db_connection():
     """Gets a per-request database connection."""
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE_FILE)
+        g.db = sqlite3.connect(config.DATABASE_FILE)
         g.db.row_factory = sqlite3.Row
     return g.db
 
@@ -128,7 +131,7 @@ def tag_group(cluster_id):
 @app.route('/face_thumbnail/<int:face_id>')
 def get_face_thumbnail(face_id):
     """Serves a pre-generated face thumbnail."""
-    thumb_path = os.path.join(THUMBNAIL_DIR, f"{face_id}.jpg")
+    thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{face_id}.jpg")
     if os.path.exists(thumb_path):
         return send_file(thumb_path, mimetype='image/jpeg')
     return "Thumbnail not found", 404
@@ -363,4 +366,4 @@ def split_cluster():
 
 if __name__ == '__main__':
     # Make sure the web app is accessible from other devices on your network
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=config.DEBUG)
