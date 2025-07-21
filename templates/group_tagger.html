@@ -21,6 +21,17 @@
         </div>
     </form>
 
+    {% if file_names %}
+    <div class="mb-6 text-sm text-gray-600">
+        <strong>Files in this group:</strong>
+        <ul class="list-disc list-inside">
+            {% for fname in file_names %}
+            <li>{{ fname }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <!-- Naming Form -->
     <form action="{{ url_for('name_cluster') }}" method="post" class="mb-4 border-t pt-4">
         <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
@@ -32,8 +43,9 @@
                     <option value="{{ name }}">
                 {% endfor %}
             </datalist>
-            <button type="submit" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700">Save Name</button>
+            <button id="save-name" type="submit" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700">Save Name</button>
         </div>
+        <p id="name-error" class="text-red-600 text-sm mt-1 hidden">This name has already been used.</p>
     </form>
 
     <!-- Merge Form -->
@@ -41,12 +53,12 @@
         <input type="hidden" name="from_cluster_id" value="{{ cluster.id }}">
         <label for="merge_target" class="block text-sm font-medium text-gray-700 mb-1">Or merge this group with an existing person:</label>
         <div class="flex gap-2">
-            <select name="to_person_name" id="merge_target" class="flex-grow p-2 border border-gray-300 rounded-md">
-                <option disabled selected>Select person to merge with...</option>
+            <input list="merge-names" name="to_person_name" id="merge_target" placeholder="Select person to merge with..." class="flex-grow p-2 border border-gray-300 rounded-md" autocomplete="off">
+            <datalist id="merge-names">
                 {% for name in existing_names %}
-                    <option value="{{ name }}">{{ name }}</option>
+                    <option value="{{ name }}">
                 {% endfor %}
-            </select>
+            </datalist>
             <button type="submit" class="bg-purple-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-purple-700">Merge</button>
         </div>
     </form>
@@ -60,4 +72,25 @@
         <a href="{{ url_for('skip_cluster', cluster_id=cluster.id) }}" class="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">Skip →</a>
     </div>
 </div>
+<script>
+    const existingNames = {{ existing_names|tojson }};
+    const nameInput = document.getElementById('person_name');
+    const saveBtn = document.getElementById('save-name');
+    const nameError = document.getElementById('name-error');
+    function checkDuplicate() {
+        const value = nameInput.value.trim().toLowerCase();
+        const duplicate = existingNames.some(n => n.toLowerCase() === value);
+        if (duplicate) {
+            saveBtn.disabled = true;
+            saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            nameError.classList.remove('hidden');
+        } else {
+            saveBtn.disabled = false;
+            saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            nameError.classList.add('hidden');
+        }
+    }
+    nameInput.addEventListener('input', checkDuplicate);
+    document.addEventListener('DOMContentLoaded', checkDuplicate);
+</script>
 {% endblock %}

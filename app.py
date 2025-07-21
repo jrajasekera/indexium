@@ -86,6 +86,14 @@ def tag_group(cluster_id):
     conn = get_db_connection()
     sample_faces = conn.execute('SELECT id FROM faces WHERE cluster_id = ? LIMIT 50', (cluster_id,)).fetchall()
 
+    file_rows = conn.execute('''
+        SELECT DISTINCT sf.last_known_filepath
+        FROM faces f
+        JOIN scanned_files sf ON f.file_hash = sf.file_hash
+        WHERE f.cluster_id = ?
+    ''', (cluster_id,)).fetchall()
+    file_names = [os.path.basename(row['last_known_filepath']) for row in file_rows]
+
     if not sample_faces:
         flash(f"Cluster #{cluster_id} no longer exists or is empty.", "error")
         return redirect(url_for('index'))
@@ -95,7 +103,10 @@ def tag_group(cluster_id):
 
     existing_names = [name['person_name'] for name in names]
     cluster_data = {'id': cluster_id, 'faces': sample_faces}
-    return render_template('group_tagger.html', cluster=cluster_data, existing_names=existing_names)
+    return render_template('group_tagger.html',
+                           cluster=cluster_data,
+                           existing_names=existing_names,
+                           file_names=file_names)
 
 
 @app.route('/face_thumbnail/<int:face_id>')
