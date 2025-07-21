@@ -269,15 +269,18 @@ def cluster_faces():
     print("Starting face clustering...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
-        # Find all faces that haven't been assigned to a cluster yet
-        rows = cursor.execute("SELECT id, face_encoding FROM faces WHERE cluster_id IS NULL").fetchall()
+        # Fetch all faces that haven't been assigned a person name yet
+        rows = cursor.execute(
+            "SELECT id, face_encoding, cluster_id FROM faces WHERE person_name IS NULL"
+        ).fetchall()
         if not rows:
-            print("No new faces to cluster.")
+            print("No unnamed faces to cluster.")
             return
 
-        print(f"Found {len(rows)} new faces to cluster.")
+        print(f"Found {len(rows)} unnamed faces to cluster.")
         face_ids = [row[0] for row in rows]
         encodings = [pickle.loads(row[1]) for row in rows]
+        existing_cluster_ids = [row[2] for row in rows]
 
         # DBSCAN parameters:
         # eps: The maximum distance between two samples for one to be considered as in the neighborhood of the other.
@@ -287,19 +290,35 @@ def cluster_faces():
 
         # Get the highest existing cluster_id to ensure new IDs are unique
         max_cluster_id_result = cursor.execute("SELECT MAX(cluster_id) FROM faces").fetchone()
-        max_cluster_id = max_cluster_id_result[0] if max_cluster_id_result and max_cluster_id_result[
-            0] is not None else 0
-        label_offset = max_cluster_id + 1
+        next_cluster_id = (
+            max_cluster_id_result[0] + 1 if max_cluster_id_result and max_cluster_id_result[0] is not None else 1
+        )
 
-        print(f"Clustering complete. Found {len(np.unique(clt.labels_))} unique groups (including noise).")
+        print(
+            f"Clustering complete. Found {len(np.unique(clt.labels_))} unique groups (including noise)."
+        )
 
-        # Prepare data for bulk update.
-        # DBSCAN labels noise points as -1. We will leave their cluster_id as NULL.
+        # Map each cluster label to an existing or new cluster_id
+        label_to_cluster = {}
+        for label in set(clt.labels_):
+            if label == -1:
+                continue
+            indices = [i for i, lbl in enumerate(clt.labels_) if lbl == label]
+            existing_ids = [existing_cluster_ids[i] for i in indices if existing_cluster_ids[i] is not None]
+            if existing_ids:
+                # Reuse the most common existing cluster_id within this group
+                cluster_id = max(set(existing_ids), key=existing_ids.count)
+            else:
+                cluster_id = next_cluster_id
+                next_cluster_id += 1
+            label_to_cluster[label] = cluster_id
+
+        # Prepare updates for faces that belong to a cluster
         updates = []
-        for face_id, label in zip(face_ids, clt.labels_):
-            if label != -1:
-                # Assign a new, unique cluster ID
-                updates.append((int(label) + label_offset, face_id))
+        for idx, label in enumerate(clt.labels_):
+            if label == -1:
+                continue  # leave noise faces unclustered
+            updates.append((label_to_cluster[label], face_ids[idx]))
 
         if updates:
             cursor.executemany("UPDATE faces SET cluster_id = ? WHERE id = ?", updates)
