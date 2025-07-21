@@ -10,10 +10,17 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 
 from config import Config
+from signal_handler import SignalHandler
 from util import get_file_hash
 
 config = Config()
 
+# --- CONFIGURATION ---
+VIDEO_DIRECTORY = config.VIDEO_DIR
+DATABASE_FILE = config.DATABASE_FILE
+FRAME_SKIP = config.FRAME_SKIP
+CPU_CORES_TO_USE = config.CPU_CORES
+SAVE_CHUNK_SIZE = config.SAVE_CHUNK_SIZE
 
 def save_thumbnail(face_id, video_path, frame_number, location_str):
     """Extracts and saves a thumbnail for a face."""
@@ -37,25 +44,6 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
     except Exception as e:
         print(f"  - [Thumb Error] Failed to create thumbnail for {video_path}: {e}")
 
-# --- CONFIGURATION ---
-# Load configuration from environment variables
-VIDEO_DIRECTORY = config.VIDEO_DIR
-DATABASE_FILE = config.DATABASE_FILE
-FRAME_SKIP = config.FRAME_SKIP
-CPU_CORES_TO_USE = config.CPU_CORES
-SAVE_CHUNK_SIZE = config.SAVE_CHUNK_SIZE
-
-
-# --- Graceful Shutdown Handler ---
-class SignalHandler:
-    """A class to handle shutdown signals gracefully."""
-
-    def __init__(self):
-        self.shutdown_requested = False
-
-    def __call__(self, signum, frame):
-        print(f"\n[Main] Shutdown signal {signum} received. Finishing current tasks and saving...")
-        self.shutdown_requested = True
 
 def setup_database():
     """Initializes the SQLite database and creates the necessary tables."""
@@ -386,15 +374,15 @@ def cluster_faces():
 
 if __name__ == "__main__":
     # Set up the signal handler for graceful shutdown
-    handler = SignalHandler()
-    signal.signal(signal.SIGINT, handler)  # Catches Ctrl+C
-    signal.signal(signal.SIGTERM, handler)  # Catches standard termination signal
+    signalHandler = SignalHandler()
+    signal.signal(signal.SIGINT, signalHandler)  # Catches Ctrl+C
+    signal.signal(signal.SIGTERM, signalHandler)  # Catches standard termination signal
 
     setup_database()
-    scan_videos_parallel(handler)
+    scan_videos_parallel(signalHandler)
 
     # Only run clustering if the process wasn't interrupted
-    if not handler.shutdown_requested:
+    if not signalHandler.shutdown_requested:
         classify_new_faces()
         cluster_faces()
     else:
