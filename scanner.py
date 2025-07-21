@@ -256,6 +256,61 @@ def scan_videos_parallel(handler):
     print("Parallel video scanning complete.")
 
 
+def classify_new_faces():
+    """Assigns person names to untagged faces based on known people."""
+    print("Starting automatic face classification...")
+    with sqlite3.connect(DATABASE_FILE) as conn:
+        cursor = conn.cursor()
+
+        # Fetch encodings of already named people
+        rows = cursor.execute(
+            "SELECT person_name, face_encoding FROM faces WHERE person_name IS NOT NULL"
+        ).fetchall()
+
+        if not rows:
+            print("No named faces available for classification.")
+            return
+
+        name_to_encs = {}
+        for name, enc_blob in rows:
+            enc = pickle.loads(enc_blob)
+            name_to_encs.setdefault(name, []).append(enc)
+
+        centroids = {name: np.mean(encs, axis=0) for name, encs in name_to_encs.items()}
+
+        # Fetch faces without a name
+        rows = cursor.execute(
+            "SELECT id, face_encoding FROM faces WHERE person_name IS NULL"
+        ).fetchall()
+
+        if not rows:
+            print("No unnamed faces to classify.")
+            return
+
+        threshold = config.AUTO_CLASSIFY_THRESHOLD
+        updates = []
+        for face_id, enc_blob in rows:
+            enc = pickle.loads(enc_blob)
+            best_name = None
+            best_dist = None
+            for name, centroid in centroids.items():
+                dist = np.linalg.norm(enc - centroid)
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_name = name
+            if best_dist is not None and best_dist <= threshold:
+                updates.append((best_name, face_id))
+
+        if updates:
+            cursor.executemany(
+                "UPDATE faces SET person_name = ? WHERE id = ?", updates
+            )
+            conn.commit()
+            print(f"Automatically assigned {len(updates)} faces to existing people.")
+        else:
+            print("No faces matched existing people within threshold.")
+
+
 def cluster_faces():
     """
     Fetches all face encodings from the database and uses DBSCAN to group them.
@@ -340,6 +395,7 @@ if __name__ == "__main__":
 
     # Only run clustering if the process wasn't interrupted
     if not handler.shutdown_requested:
+        classify_new_faces()
         cluster_faces()
     else:
         print("[Main] Clustering skipped due to script interruption.")
