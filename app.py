@@ -2,7 +2,7 @@ import os
 import sqlite3
 
 import ffmpeg
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, g
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, g, session
 
 # --- CONFIGURATION ---
 # Get video directory from environment variable
@@ -67,11 +67,27 @@ def inject_stats():
 def index():
     """Finds the next unnamed group and redirects to the tagging page for it."""
     conn = get_db_connection()
-    next_group = conn.execute('''
+    skipped = session.get('skipped_clusters', [])
+
+    base_query = '''
         SELECT MIN(cluster_id) as id
         FROM faces
         WHERE cluster_id IS NOT NULL AND person_name IS NULL
-    ''').fetchone()
+    '''
+
+    params = []
+    if skipped:
+        placeholders = ','.join('?' for _ in skipped)
+        query = base_query + f" AND cluster_id NOT IN ({placeholders})"
+        params.extend(skipped)
+    else:
+        query = base_query
+
+    next_group = conn.execute(query, params).fetchone()
+
+    if (not next_group or next_group['id'] is None) and skipped:
+        session.pop('skipped_clusters', None)
+        next_group = conn.execute(base_query).fetchone()
 
     if next_group and next_group['id'] is not None:
         return redirect(url_for('tag_group', cluster_id=next_group['id']))
@@ -146,19 +162,12 @@ def delete_cluster():
 
 @app.route('/skip_cluster/<int:cluster_id>')
 def skip_cluster(cluster_id):
-    """Finds the next available cluster with an ID greater than the current one."""
-    conn = get_db_connection()
-    next_group = conn.execute('''
-        SELECT MIN(cluster_id) as id
-        FROM faces
-        WHERE cluster_id > ? AND cluster_id IS NOT NULL AND person_name IS NULL
-    ''', (cluster_id,)).fetchone()
-
-    if next_group and next_group['id'] is not None:
-        return redirect(url_for('tag_group', cluster_id=next_group['id']))
-    else:
-        flash("No more groups to skip to. Looping back to the start.", "success")
-        return redirect(url_for('index'))
+    """Marks a group as skipped so it is revisited after other groups."""
+    skipped = session.get('skipped_clusters', [])
+    if cluster_id not in skipped:
+        skipped.append(cluster_id)
+    session['skipped_clusters'] = skipped
+    return redirect(url_for('index'))
 
 
 @app.route('/write_metadata', methods=['POST'])
