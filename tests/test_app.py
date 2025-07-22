@@ -141,3 +141,21 @@ def test_tag_group_pagination(tmp_path, monkeypatch):
         assert resp2.status_code == 200
         assert b"Page 2 of 2" in resp2.data
 
+
+def test_tag_group_select_buttons(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/group/1")
+        assert resp.status_code == 200
+        assert b"Select All Faces" in resp.data
+        assert b"Unselect All Faces" in resp.data
+
