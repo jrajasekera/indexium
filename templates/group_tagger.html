@@ -22,6 +22,18 @@
         </div>
     </form>
 
+    {% if cluster.total_pages > 1 %}
+    <div class="flex justify-center items-center mb-4 gap-2">
+        {% if cluster.page > 1 %}
+        <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page - 1) }}" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Previous</a>
+        {% endif %}
+        <span>Page {{ cluster.page }} of {{ cluster.total_pages }}</span>
+        {% if cluster.page < cluster.total_pages %}
+        <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page + 1) }}" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
     {% if file_names %}
     <div class="mb-6 text-sm text-gray-600">
         <strong>Files in this group:</strong>

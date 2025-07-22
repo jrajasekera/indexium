@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import math
 
 import ffmpeg
 from flask import (
@@ -104,7 +105,21 @@ def index():
 def tag_group(cluster_id):
     """Displays a single group for tagging."""
     conn = get_db_connection()
-    sample_faces = conn.execute('SELECT id FROM faces WHERE cluster_id = ? LIMIT 50', (cluster_id,)).fetchall()
+    page = max(1, int(request.args.get("page", 1)))
+    PAGE_SIZE = 50
+
+    total_faces = conn.execute(
+        "SELECT COUNT(*) as count FROM faces WHERE cluster_id = ?",
+        (cluster_id,),
+    ).fetchone()["count"]
+    total_pages = max(1, math.ceil(total_faces / PAGE_SIZE))
+    page = min(page, total_pages)
+    offset = (page - 1) * PAGE_SIZE
+
+    sample_faces = conn.execute(
+        "SELECT id FROM faces WHERE cluster_id = ? LIMIT ? OFFSET ?",
+        (cluster_id, PAGE_SIZE, offset),
+    ).fetchall()
 
     file_rows = conn.execute('''
         SELECT DISTINCT sf.last_known_filepath
@@ -122,7 +137,12 @@ def tag_group(cluster_id):
         'SELECT DISTINCT person_name FROM faces WHERE person_name IS NOT NULL ORDER BY person_name').fetchall()
 
     existing_names = [name['person_name'] for name in names]
-    cluster_data = {'id': cluster_id, 'faces': sample_faces}
+    cluster_data = {
+        'id': cluster_id,
+        'faces': sample_faces,
+        'page': page,
+        'total_pages': total_pages,
+    }
     return render_template('group_tagger.html',
                            cluster=cluster_data,
                            existing_names=existing_names,
