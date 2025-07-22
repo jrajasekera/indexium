@@ -16,8 +16,9 @@
                 <p>No faces found for this group. It may have been an error.</p>
             {% endfor %}
         </div>
-        <div class="text-center mb-6">
-            <button type="submit" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Split Selected Faces into New Group</button>
+        <div class="text-center mb-6 space-x-2">
+            <button type="submit" formaction="{{ url_for('split_cluster') }}" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Split Selected Faces into New Group</button>
+            <button type="submit" formaction="{{ url_for('remove_faces') }}" class="bg-red-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-600">Remove Selected Faces</button>
         </div>
     </form>
 

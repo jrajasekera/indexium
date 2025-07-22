@@ -1,5 +1,6 @@
 import pickle
 import sqlite3
+from pathlib import Path
 
 import numpy as np
 
@@ -12,6 +13,9 @@ def setup_app_db(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner_module.config, 'DATABASE_FILE', str(db_path))
     monkeypatch.setattr(scanner_module, 'DATABASE_FILE', str(db_path))
     monkeypatch.setattr(app_module.config, 'DATABASE_FILE', str(db_path))
+    thumb_dir = tmp_path / 'thumbs'
+    monkeypatch.setattr(app_module.config, 'THUMBNAIL_DIR', str(thumb_dir))
+    monkeypatch.setattr(scanner_module.config, 'THUMBNAIL_DIR', str(thumb_dir))
     scanner_module.setup_database()
     return db_path
 
@@ -47,3 +51,37 @@ def test_get_progress_stats(tmp_path, monkeypatch):
         stats = app_module.get_progress_stats()
     assert stats['unnamed_groups_count'] == 1
     assert stats['named_people_count'] == 2
+
+
+def test_remove_faces_route(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 1, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+    ids = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+    remove_id = ids[0]
+    thumb_dir = Path(app_module.config.THUMBNAIL_DIR)
+    thumb_dir.mkdir()
+    (thumb_dir / f"{remove_id}.jpg").write_bytes(b"test")
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/remove_faces",
+            data={"cluster_id": 1, "face_ids": [str(remove_id)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    remaining = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+    assert remove_id not in remaining
+    assert not (thumb_dir / f"{remove_id}.jpg").exists()
+
