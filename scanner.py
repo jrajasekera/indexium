@@ -1,3 +1,7 @@
+"""Video scanning and face management utilities."""
+
+from __future__ import annotations
+
 import os
 import pickle
 import signal
@@ -13,6 +17,8 @@ from config import Config
 from signal_handler import SignalHandler
 from util import get_file_hash
 
+from typing import Iterable, List, Tuple
+
 config = Config()
 
 # --- CONFIGURATION ---
@@ -22,8 +28,23 @@ FRAME_SKIP = config.FRAME_SKIP
 CPU_CORES_TO_USE = config.CPU_CORES
 SAVE_CHUNK_SIZE = config.SAVE_CHUNK_SIZE
 
-def save_thumbnail(face_id, video_path, frame_number, location_str):
-    """Extracts and saves a thumbnail for a face."""
+def save_thumbnail(
+    face_id: int, video_path: str, frame_number: int, location_str: str
+) -> None:
+    """Save a cropped face thumbnail for quick display.
+
+    Parameters
+    ----------
+    face_id:
+        Database identifier of the face row.
+    video_path:
+        Path to the source video from which to extract the frame.
+    frame_number:
+        Frame index within ``video_path`` that contains the face.
+    location_str:
+        Comma separated ``top,right,bottom,left`` coordinates of the face within
+        the frame.
+    """
     os.makedirs(config.THUMBNAIL_DIR, exist_ok=True)
     try:
         cap = cv2.VideoCapture(video_path)
@@ -45,8 +66,15 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
         print(f"  - [Thumb Error] Failed to create thumbnail for {video_path}: {e}")
 
 
-def setup_database():
-    """Initializes the SQLite database and creates the necessary tables."""
+def setup_database() -> None:
+    """Create the SQLite schema used by the scanner.
+
+    The database contains two tables:
+    ``scanned_files`` holds a unique hash for each processed video and the last
+    known file path, while ``faces`` stores individual face detections linked by
+    that hash.  Indexes are created for common lookup fields to improve
+    performance.
+    """
     print("Setting up database...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
@@ -77,11 +105,19 @@ def setup_database():
     print("Database setup complete.")
 
 
-def process_video_job(job_data):
-    """
-    Worker function to process a single video file.
-    Accepts a tuple (video_path, file_hash).
-    Returns its findings to the main process.
+def process_video_job(job_data: tuple[str, str]) -> tuple[str, str, bool, list[tuple[str, int, str, bytes]]]:
+    """Process a single video and return detected faces.
+
+    Parameters
+    ----------
+    job_data:
+        Tuple containing ``video_path`` and the file's unique hash.
+
+    Returns
+    -------
+    tuple[str, str, bool, list[tuple[str, int, str, bytes]]]
+        ``(file_hash, video_path, success, faces)`` where ``faces`` is a list of
+        tuples ``(file_hash, frame_number, location_str, encoding_blob)``.
     """
     video_path, file_hash = job_data
     print(f"[Worker] Processing: {video_path}")
@@ -124,8 +160,19 @@ def process_video_job(job_data):
         return (file_hash, video_path, False, [])
 
 
-def write_data_to_db(face_data, scanned_files_info):
-    """Writes a chunk of collected data to the SQLite database and saves thumbnails."""
+def write_data_to_db(
+    face_data: list[tuple[str, int, str, bytes]],
+    scanned_files_info: list[tuple[str, str]],
+) -> None:
+    """Persist faces and file information to disk.
+
+    Parameters
+    ----------
+    face_data:
+        List of face tuples ``(file_hash, frame_number, loc_str, encoding_blob)``.
+    scanned_files_info:
+        Mapping between a file hash and its path for newly processed videos.
+    """
     if not face_data and not scanned_files_info:
         return
     print(
@@ -161,10 +208,14 @@ def write_data_to_db(face_data, scanned_files_info):
         print(f"[Main] DATABASE ERROR during save: {e}")
 
 
-def scan_videos_parallel(handler):
-    """
-    Scans videos in parallel, collecting results and saving them in chunks.
-    Identifies videos by hash to avoid re-processing moved/renamed files.
+def scan_videos_parallel(handler: SignalHandler) -> None:
+    """Scan all videos in ``VIDEO_DIRECTORY`` using multiple workers.
+
+    Parameters
+    ----------
+    handler:
+        ``SignalHandler`` instance used to gracefully stop processing when a
+        shutdown is requested.
     """
     print("Starting parallel video scan...")
     all_video_files = [os.path.join(r, f) for r, _, fs in os.walk(VIDEO_DIRECTORY) for f in fs if
@@ -244,8 +295,13 @@ def scan_videos_parallel(handler):
     print("Parallel video scanning complete.")
 
 
-def classify_new_faces():
-    """Assigns person names to untagged faces based on known people."""
+def classify_new_faces() -> None:
+    """Automatically assign names to unknown faces.
+
+    The function computes an embedding centroid for each already named person
+    and compares all unnamed faces against these centroids.  If the distance is
+    below ``AUTO_CLASSIFY_THRESHOLD`` the face is assigned that person's name.
+    """
     print("Starting automatic face classification...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
@@ -299,9 +355,11 @@ def classify_new_faces():
             print("No faces matched existing people within threshold.")
 
 
-def cluster_faces():
-    """
-    Fetches all face encodings from the database and uses DBSCAN to group them.
+def cluster_faces() -> None:
+    """Cluster all unnamed faces using the DBSCAN algorithm.
+
+    Existing cluster identifiers are preserved where possible so that repeated
+    clustering runs will not unnecessarily create new groups.
     """
     print("Starting face clustering...")
     with sqlite3.connect(DATABASE_FILE) as conn:

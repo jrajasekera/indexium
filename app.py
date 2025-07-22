@@ -1,9 +1,14 @@
+"""Flask web interface for tagging and managing faces."""
+
+from __future__ import annotations
+
 import os
 import sqlite3
 
 import ffmpeg
 from flask import (
     Flask,
+    Response,
     render_template,
     request,
     redirect,
@@ -16,6 +21,8 @@ from flask import (
 
 from config import Config
 
+from typing import Dict
+
 config = Config()
 
 app = Flask(__name__)
@@ -24,8 +31,8 @@ app.secret_key = config.SECRET_KEY
 
 # --- DATABASE & HELPERS ---
 
-def get_db_connection():
-    """Gets a per-request database connection."""
+def get_db_connection() -> sqlite3.Connection:
+    """Return a connection to the SQLite database for the current request."""
     if "db" not in g:
         g.db = sqlite3.connect(config.DATABASE_FILE)
         g.db.row_factory = sqlite3.Row
@@ -33,15 +40,15 @@ def get_db_connection():
 
 
 @app.teardown_appcontext
-def close_db_connection(exception):
-    """Closes the database connection at the end of the request."""
+def close_db_connection(exception: Exception | None) -> None:
+    """Close the request scoped database connection."""
     db = g.pop("db", None)
     if db is not None:
         db.close()
 
 
-def get_progress_stats():
-    """Gets counts for UI display."""
+def get_progress_stats() -> Dict[str, int]:
+    """Compute simple progress statistics for template rendering."""
     conn = get_db_connection()
     unnamed_groups_count = conn.execute('''
         SELECT COUNT(DISTINCT cluster_id) as count 
@@ -61,15 +68,16 @@ def get_progress_stats():
 
 # Make stats available to all templates
 @app.context_processor
-def inject_stats():
+def inject_stats() -> Dict[str, Dict[str, int]]:
+    """Inject progress statistics into the template context."""
     return dict(stats=get_progress_stats())
 
 
 # --- ROUTES ---
 
 @app.route('/')
-def index():
-    """Finds the next unnamed group and redirects to the tagging page for it."""
+def index() -> Response:
+    """Redirect to the next unnamed cluster or show completion page."""
     conn = get_db_connection()
     skipped = session.get('skipped_clusters', [])
 
@@ -101,8 +109,8 @@ def index():
 
 
 @app.route('/group/<int:cluster_id>')
-def tag_group(cluster_id):
-    """Displays a single group for tagging."""
+def tag_group(cluster_id: int) -> Response:
+    """Render the tagging page for a single cluster."""
     conn = get_db_connection()
     sample_faces = conn.execute('SELECT id FROM faces WHERE cluster_id = ? LIMIT 50', (cluster_id,)).fetchall()
 
@@ -130,8 +138,8 @@ def tag_group(cluster_id):
 
 
 @app.route('/face_thumbnail/<int:face_id>')
-def get_face_thumbnail(face_id):
-    """Serves a pre-generated face thumbnail."""
+def get_face_thumbnail(face_id: int) -> Response:
+    """Return a previously generated thumbnail image."""
     thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{face_id}.jpg")
     if os.path.exists(thumb_path):
         return send_file(thumb_path, mimetype='image/jpeg')
@@ -139,8 +147,8 @@ def get_face_thumbnail(face_id):
 
 
 @app.route('/name_cluster', methods=['POST'])
-def name_cluster():
-    """Handles the form submission for naming a cluster."""
+def name_cluster() -> Response:
+    """Assign a human readable name to a face cluster."""
     cluster_id = request.form['cluster_id']
     person_name = request.form['person_name'].strip()
 
@@ -153,8 +161,8 @@ def name_cluster():
 
 
 @app.route('/delete_cluster', methods=['POST'])
-def delete_cluster():
-    """Deletes all data associated with a cluster_id."""
+def delete_cluster() -> Response:
+    """Remove all faces associated with a specific cluster."""
     cluster_id = request.form['cluster_id']
     if cluster_id:
         conn = get_db_connection()
@@ -165,8 +173,8 @@ def delete_cluster():
 
 
 @app.route('/skip_cluster/<int:cluster_id>')
-def skip_cluster(cluster_id):
-    """Marks a group as skipped so it is revisited after other groups."""
+def skip_cluster(cluster_id: int) -> Response:
+    """Skip a cluster for now so it can be revisited later."""
     skipped = session.get('skipped_clusters', [])
     if cluster_id not in skipped:
         skipped.append(cluster_id)
@@ -175,11 +183,8 @@ def skip_cluster(cluster_id):
 
 
 @app.route('/write_metadata', methods=['POST'])
-def write_metadata():
-    """
-    Intelligently reads, merges, and writes face tags into the file's
-    metadata 'comment' tag using ffmpeg.
-    """
+def write_metadata() -> Response:
+    """Write consolidated face tags back into the video files."""
     print("Starting intelligent metadata write process...")
     conn = get_db_connection()
     videos_to_tag = conn.execute('SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL').fetchall()
@@ -243,8 +248,8 @@ def write_metadata():
 # --- NEW ROUTES FOR REVIEWING/EDITING ---
 
 @app.route('/people')
-def list_people():
-    """Shows a grid of all identified people."""
+def list_people() -> Response:
+    """Show a list of all identified people."""
     conn = get_db_connection()
     # Get one representative face for each person, plus a count of their faces
     people = conn.execute('''
@@ -262,8 +267,8 @@ def list_people():
 
 
 @app.route('/person/<person_name>')
-def person_details(person_name):
-    """Shows all faces for one person and provides editing tools."""
+def person_details(person_name: str) -> Response:
+    """Display all faces for a single person."""
     conn = get_db_connection()
     faces = conn.execute('SELECT id FROM faces WHERE person_name = ?', (person_name,)).fetchall()
     if not faces:
@@ -273,7 +278,8 @@ def person_details(person_name):
 
 
 @app.route('/rename_person/<old_name>', methods=['POST'])
-def rename_person(old_name):
+def rename_person(old_name: str) -> Response:
+    """Rename an existing person to ``new_name``."""
     new_name = request.form['new_name'].strip()
     if new_name:
         conn = get_db_connection()
@@ -287,7 +293,8 @@ def rename_person(old_name):
 
 
 @app.route('/unname_person', methods=['POST'])
-def unname_person():
+def unname_person() -> Response:
+    """Clear the assigned name for a person."""
     person_name = request.form['person_name']
     conn = get_db_connection()
     conn.execute('UPDATE faces SET person_name = NULL WHERE person_name = ?', (person_name,))
@@ -297,7 +304,8 @@ def unname_person():
 
 
 @app.route('/delete_cluster_by_name', methods=['POST'])
-def delete_cluster_by_name():
+def delete_cluster_by_name() -> Response:
+    """Delete all data associated with a person's name."""
     person_name = request.form['person_name']
     conn = get_db_connection()
     # This is safer than deleting by cluster_id, as a person might be a result of merges
@@ -310,7 +318,8 @@ def delete_cluster_by_name():
 # --- NEW ROUTES FOR MERGE/SPLIT ---
 
 @app.route('/merge_clusters', methods=['POST'])
-def merge_clusters():
+def merge_clusters() -> Response:
+    """Merge an entire cluster into an existing person."""
     from_cluster_id = request.form['from_cluster_id']
     to_person_name = request.form.get('to_person_name')
 
@@ -338,7 +347,8 @@ def merge_clusters():
 
 
 @app.route('/split_cluster', methods=['POST'])
-def split_cluster():
+def split_cluster() -> Response:
+    """Move selected faces from a cluster into a new group."""
     original_cluster_id = request.form['cluster_id']
     face_ids_to_split = request.form.getlist('face_ids')
 
