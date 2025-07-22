@@ -11,6 +11,7 @@ A Python-based video face scanning and tagging application that automatically de
 - **File Hash-based Tracking**: Tracks videos by content hash, handles moved/renamed files gracefully
 - **Metadata Writing**: Embeds person tags directly into video file metadata
 - **Face Group Management**: Split groups, merge people, rename, and organize your tags
+- **Remove False Positives**: Delete mistaken face detections directly from the web UI
 - **Progress Tracking**: Visual progress indicators and statistics
 
 ## Screenshots
