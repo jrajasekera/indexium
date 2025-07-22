@@ -85,3 +85,25 @@ def test_remove_faces_route(tmp_path, monkeypatch):
     assert remove_id not in remaining
     assert not (thumb_dir / f"{remove_id}.jpg").exists()
 
+
+def test_tag_group_pagination(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    for i in range(60):
+        conn.execute(
+            "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+            ("h1", i, "0,0,0,0", enc, 1),
+        )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp1 = client.get("/group/1?page=1")
+        assert resp1.status_code == 200
+        assert b"Page 1 of 2" in resp1.data
+
+        resp2 = client.get("/group/1?page=2")
+        assert resp2.status_code == 200
+        assert b"Page 2 of 2" in resp2.data
+
