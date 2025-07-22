@@ -327,6 +327,36 @@ def delete_cluster_by_name():
     return redirect(url_for('list_people'))
 
 
+@app.route('/remove_person_faces', methods=['POST'])
+def remove_person_faces():
+    """Deletes selected faces for a person and their thumbnails."""
+    person_name = request.form['person_name']
+    face_ids = request.form.getlist('face_ids')
+
+    if not face_ids:
+        flash("You must select at least one face to remove.", "error")
+        return redirect(url_for('person_details', person_name=person_name))
+
+    conn = get_db_connection()
+    placeholders = ', '.join('?' for _ in face_ids)
+    conn.execute(f'DELETE FROM faces WHERE id IN ({placeholders})', face_ids)
+    conn.commit()
+
+    for fid in face_ids:
+        thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{fid}.jpg")
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+
+    remaining = conn.execute('SELECT 1 FROM faces WHERE person_name = ? LIMIT 1', (person_name,)).fetchone()
+
+    flash(f"Removed {len(face_ids)} face(s).", "success")
+    if remaining:
+        return redirect(url_for('person_details', person_name=person_name))
+    else:
+        flash(f"'{person_name}' no longer has any faces and has been removed from the list.", "info")
+        return redirect(url_for('list_people'))
+
+
 # --- NEW ROUTES FOR MERGE/SPLIT ---
 
 @app.route('/merge_clusters', methods=['POST'])

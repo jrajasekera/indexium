@@ -5,11 +5,20 @@
     <h2 class="font-semibold text-3xl mb-2 text-center">{{ person_name }}</h2>
     <p class="text-center text-gray-500 mb-6">{{ faces|length }} faces found for this person.</p>
 
-    <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg max-h-96 overflow-y-auto">
-        {% for face in faces %}
-            <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face of {{ person_name }}" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow">
-        {% endfor %}
-    </div>
+    <form id="face-selection-form" action="{{ url_for('remove_person_faces') }}" method="post">
+        <input type="hidden" name="person_name" value="{{ person_name }}">
+        <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg max-h-96 overflow-y-auto">
+            {% for face in faces %}
+                <label class="cursor-pointer">
+                    <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
+                    <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face of {{ person_name }}" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow transition-all">
+                </label>
+            {% endfor %}
+        </div>
+        <div class="text-center mb-6">
+            <button type="submit" class="bg-red-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-600">Remove Selected Faces</button>
+        </div>
+    </form>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t pt-6">
         <!-- Rename Form -->
