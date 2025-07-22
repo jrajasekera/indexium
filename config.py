@@ -13,7 +13,7 @@ class Config:
     _cpu = os.environ.get("CPU_CORES", "6")
     CPU_CORES: Optional[int] = None if _cpu is None or _cpu.lower() == "none" else int(_cpu)
 
-    SAVE_CHUNK_SIZE: int = int(os.environ.get("SAVE_CHUNK_SIZE", "10"))
+    SAVE_CHUNK_SIZE: int = int(os.environ.get("SAVE_CHUNK_SIZE", "6"))
 
     SECRET_KEY: str = os.environ.get("SECRET_KEY", os.urandom(24).hex())
     DEBUG: bool = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
