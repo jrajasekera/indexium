@@ -86,6 +86,40 @@ def test_remove_faces_route(tmp_path, monkeypatch):
     assert not (thumb_dir / f"{remove_id}.jpg").exists()
 
 
+def test_remove_person_faces_route(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 1, "0,0,0,0", enc, "Alice"),
+    )
+    conn.commit()
+    ids = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+    remove_id = ids[0]
+    thumb_dir = Path(app_module.config.THUMBNAIL_DIR)
+    thumb_dir.mkdir()
+    (thumb_dir / f"{remove_id}.jpg").write_bytes(b"test")
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/remove_person_faces",
+            data={"person_name": "Alice", "face_ids": [str(remove_id)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    remaining = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+    assert remove_id not in remaining
+    assert len(remaining) == 1
+    assert not (thumb_dir / f"{remove_id}.jpg").exists()
+
+
 def test_tag_group_pagination(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)
