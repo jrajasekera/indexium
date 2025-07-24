@@ -4,13 +4,13 @@
 <div class="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
     <h2 class="font-semibold text-2xl mb-4 text-center">Who is this? (Group #{{ cluster.id }})</h2>
 
-    <form id="face-selection-form" action="{{ url_for('split_cluster') }}" method="post">
+    <form id="face-selection-form" action="{{ url_for('tagging_bp.split_cluster') }}" method="post">
         <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
         <div class="flex flex-wrap justify-center gap-3 mb-6 p-4 bg-gray-50 rounded-lg">
             {% for face in cluster.faces %}
                 <label class="cursor-pointer">
                     <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
-                    <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}" alt="Face from video" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow transition-all">
+                    <img src="{{ url_for('tagging_bp.get_face_thumbnail', face_id=face.id) }}" alt="Face from video" class="w-24 h-24 object-cover rounded-lg bg-gray-200 shadow transition-all">
                 </label>
             {% else %}
                 <p>No faces found for this group. It may have been an error.</p>
@@ -21,19 +21,19 @@
             <button id="unselect-all" type="button" class="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">Unselect All Faces</button>
         </div>
         <div class="text-center mb-6 space-x-2">
-            <button type="submit" formaction="{{ url_for('split_cluster') }}" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Split Selected Faces into New Group</button>
-            <button type="submit" formaction="{{ url_for('remove_faces') }}" class="bg-red-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-600">Remove Selected Faces</button>
+            <button type="submit" formaction="{{ url_for('tagging_bp.split_cluster') }}" class="bg-yellow-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-yellow-600">Split Selected Faces into New Group</button>
+            <button type="submit" formaction="{{ url_for('tagging_bp.remove_faces') }}" class="bg-red-500 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-600">Remove Selected Faces</button>
         </div>
     </form>
 
     {% if cluster.total_pages > 1 %}
     <div class="flex justify-center items-center mb-4 gap-2">
         {% if cluster.page > 1 %}
-        <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page - 1) }}" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Previous</a>
+        <a href="{{ url_for('tagging_bp.tag_group', cluster_id=cluster.id, page=cluster.page - 1) }}" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Previous</a>
         {% endif %}
         <span>Page {{ cluster.page }} of {{ cluster.total_pages }}</span>
         {% if cluster.page < cluster.total_pages %}
-        <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page + 1) }}" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Next</a>
+        <a href="{{ url_for('tagging_bp.tag_group', cluster_id=cluster.id, page=cluster.page + 1) }}" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Next</a>
         {% endif %}
     </div>
     {% endif %}
@@ -50,7 +50,7 @@
     {% endif %}
 
     <!-- Naming Form -->
-    <form action="{{ url_for('name_cluster') }}" method="post" class="mb-4 border-t pt-4">
+    <form action="{{ url_for('tagging_bp.name_cluster') }}" method="post" class="mb-4 border-t pt-4">
         <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
         <label for="person_name" class="block text-sm font-medium text-gray-700 mb-1">Name this entire group:</label>
         <div class="flex gap-2">
@@ -66,7 +66,7 @@
     </form>
 
     <!-- Merge Form -->
-    <form action="{{ url_for('merge_clusters') }}" method="post" class="mb-4">
+    <form action="{{ url_for('tagging_bp.merge_clusters') }}" method="post" class="mb-4">
         <input type="hidden" name="from_cluster_id" value="{{ cluster.id }}">
         <label for="merge_target" class="block text-sm font-medium text-gray-700 mb-1">Or merge this group with an existing person:</label>
         <div class="flex gap-2">
@@ -82,11 +82,11 @@
 
     <!-- Actions -->
     <div class="flex justify-between items-center mt-6 border-t pt-4">
-        <form action="{{ url_for('delete_cluster') }}" method="post" onsubmit="return confirm('Are you sure you want to permanently delete this group? This cannot be undone.');">
+        <form action="{{ url_for('tagging_bp.delete_cluster') }}" method="post" onsubmit="return confirm('Are you sure you want to permanently delete this group? This cannot be undone.');">
             <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
             <button type="submit" class="text-sm text-red-600 hover:text-red-800">Delete Group</button>
         </form>
-        <a href="{{ url_for('skip_cluster', cluster_id=cluster.id) }}" class="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">Skip →</a>
+        <a href="{{ url_for('tagging_bp.skip_cluster', cluster_id=cluster.id) }}" class="bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-md hover:bg-gray-300">Skip →</a>
     </div>
 </div>
 <script>
