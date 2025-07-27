@@ -175,30 +175,45 @@ def scan_videos_parallel(handler):
 
     print(
         f"Found {len(all_video_files)} video files. Identifying new or changed files by hashing. This may take a moment...")
+
+    # Determine the number of processes for hashing
+    num_hashing_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
+    print(f"Hashing files using {num_hashing_processes} processes...")
+
+    # Hash files in parallel
+    with Pool(processes=num_hashing_processes) as pool:
+        # Create a list of filepaths that need hashing
+        filepaths_to_hash = all_video_files
+        # Use imap_unordered for progress reporting, though map would also work
+        hashed_files = {}
+        total_files = len(filepaths_to_hash)
+        processed_count = 0
+
+        results_iterator = pool.imap_unordered(get_file_hash, filepaths_to_hash)
+
+        for filepath, file_hash in zip(filepaths_to_hash, results_iterator):
+            if handler.shutdown_requested:
+                print("[Main] Shutdown detected during file hashing. Stopping.")
+                break
+
+            processed_count += 1
+            print(f"[{processed_count}/{total_files}] Hashed: {filepath} | Hash: {file_hash if file_hash else 'FAILED'}")
+
+            if file_hash:
+                hashed_files[filepath] = file_hash
+
+    if handler.shutdown_requested:
+        print("[Main] Hashing process stopped.")
+        return
+
     jobs_to_process = []
-
-    # Counter for tracking progress
-    processed_count = 0
-    total_files = len(all_video_files)
-    for filepath in all_video_files:
-        if handler.shutdown_requested:
-            print("[Main] Shutdown detected during file hashing. Stopping.")
-            break
-
-        processed_count += 1
-        file_hash = get_file_hash(filepath)
-
-        # Print progress information
-        print(f"[{processed_count}/{total_files}] File: {filepath} | Hash: {file_hash if file_hash else 'FAILED'}")
-
-        if file_hash and file_hash not in scanned_hashes:
-            # Get file size for sorting
+    for filepath, file_hash in hashed_files.items():
+        if file_hash not in scanned_hashes:
             try:
                 file_size = os.path.getsize(filepath)
                 jobs_to_process.append((filepath, file_hash, file_size))
             except OSError as e:
                 print(f"Warning: Could not get size for {filepath}: {e}")
-                # Add with size 0 if we can't get the actual size
                 jobs_to_process.append((filepath, file_hash, 0))
 
     if not jobs_to_process:
