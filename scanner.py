@@ -22,6 +22,10 @@ FRAME_SKIP = config.FRAME_SKIP
 CPU_CORES_TO_USE = config.CPU_CORES
 SAVE_CHUNK_SIZE = config.SAVE_CHUNK_SIZE
 
+def get_file_hash_with_path(filepath):
+    """Return the given filepath alongside its computed hash."""
+    return filepath, get_file_hash(filepath)
+
 def save_thumbnail(face_id, video_path, frame_number, location_str):
     """Extracts and saves a thumbnail for a face."""
     os.makedirs(config.THUMBNAIL_DIR, exist_ok=True)
@@ -189,9 +193,9 @@ def scan_videos_parallel(handler):
         total_files = len(filepaths_to_hash)
         processed_count = 0
 
-        results_iterator = pool.imap_unordered(get_file_hash, filepaths_to_hash)
+        results_iterator = pool.imap_unordered(get_file_hash_with_path, filepaths_to_hash)
 
-        for filepath, file_hash in zip(filepaths_to_hash, results_iterator):
+        for filepath, file_hash in results_iterator:
             if handler.shutdown_requested:
                 print("[Main] Shutdown detected during file hashing. Stopping.")
                 break
