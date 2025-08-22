@@ -248,13 +248,18 @@ def write_metadata():
             stream = ffmpeg.output(stream, output_path, c='copy', metadata=f'comment=People: {tags_string}')
             ffmpeg.run(stream, overwrite_output=True, quiet=True)
 
-            os.remove(input_path)
-            os.rename(output_path, input_path)
+            try:
+                os.replace(output_path, input_path)
+            except Exception:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                raise
             print(f"  - Successfully tagged and replaced file.")
             tagged_count += 1
         except Exception as e:
             print(f"  - FFMPEG WRITE ERROR for file {video_path}: {e}")
-            if os.path.exists(output_path): os.remove(output_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
     flash(f"Metadata writing complete. Updated {tagged_count} files.", "success")
     return redirect(url_for('index'))
