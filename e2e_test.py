@@ -3,6 +3,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import logging
 
 import ffmpeg
 
@@ -57,14 +58,15 @@ def run_pipeline(video_dir: str, work_dir: str) -> None:
         ).fetchone()[0]
         video_paths = [row[0] for row in conn.execute("SELECT last_known_filepath FROM scanned_files").fetchall()]
 
-    print(f"Faces: {face_count}")
-    print(f"Clusters: {cluster_count}")
+    logger = logging.getLogger(__name__)
+    logger.info("Faces: %s", face_count)
+    logger.info("Clusters: %s", cluster_count)
     for path in video_paths:
         try:
             comment = ffmpeg.probe(path).get("format", {}).get("tags", {}).get("comment", "")
         except Exception:
             comment = ""
-        print(f"{os.path.basename(path)} comment: {comment}")
+        logger.info("%s comment: %s", os.path.basename(path), comment)
 
 
 def main() -> None:

@@ -1,6 +1,13 @@
 import os
+import logging
 from dataclasses import dataclass
 from typing import Optional
+
+# Configure application-wide logging format and level
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
 
 @dataclass
 class Config:

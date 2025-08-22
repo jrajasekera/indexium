@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import math
+import logging
 
 import ffmpeg
 from flask import (
@@ -17,6 +18,7 @@ from flask import (
 
 from config import Config
 
+logger = logging.getLogger(__name__)
 config = Config()
 
 app = Flask(__name__)
@@ -200,7 +202,7 @@ def write_metadata():
     Intelligently reads, merges, and writes face tags into the file's
     metadata 'comment' tag using ffmpeg.
     """
-    print("Starting intelligent metadata write process...")
+    logger.info("Starting intelligent metadata write process...")
     conn = get_db_connection()
     videos_to_tag = conn.execute('SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL').fetchall()
 
@@ -210,7 +212,7 @@ def write_metadata():
         path_info = conn.execute('SELECT last_known_filepath FROM scanned_files WHERE file_hash = ?',
                                  (file_hash,)).fetchone()
         if not path_info or not os.path.exists(path_info['last_known_filepath']):
-            print(f"  - WARNING: Path for hash {file_hash} not found. Skipping.")
+            logger.warning("  - WARNING: Path for hash %s not found. Skipping.", file_hash)
             continue
 
         video_path = path_info['last_known_filepath']
@@ -231,14 +233,18 @@ def write_metadata():
             else:
                 existing_names = set()
         except ffmpeg.Error as e:
-            print(f"  - FFPROBE ERROR for {video_path}: {e.stderr.decode('utf8')}. Assuming no existing tags.")
+            logger.warning(
+                "  - FFPROBE ERROR for %s: %s. Assuming no existing tags.",
+                video_path,
+                e.stderr.decode('utf8'),
+            )
             existing_names = set()
 
         # Merge names and create new tag string
         all_names = sorted(list(db_names.union(existing_names)))
         tags_string = ", ".join(all_names)
 
-        print(f"Processing {video_path} -> Tags: {tags_string}")
+        logger.info("Processing %s -> Tags: %s", video_path, tags_string)
 
         try:
             input_path = video_path
@@ -250,11 +256,12 @@ def write_metadata():
 
             os.remove(input_path)
             os.rename(output_path, input_path)
-            print(f"  - Successfully tagged and replaced file.")
+            logger.info("  - Successfully tagged and replaced file.")
             tagged_count += 1
         except Exception as e:
-            print(f"  - FFMPEG WRITE ERROR for file {video_path}: {e}")
-            if os.path.exists(output_path): os.remove(output_path)
+            logger.error("  - FFMPEG WRITE ERROR for file %s: %s", video_path, e)
+            if os.path.exists(output_path):
+                os.remove(output_path)
 
     flash(f"Metadata writing complete. Updated {tagged_count} files.", "success")
     return redirect(url_for('index'))

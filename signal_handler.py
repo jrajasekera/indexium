@@ -1,3 +1,7 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class SignalHandler:
     """A class to handle shutdown signals gracefully."""
@@ -6,5 +10,8 @@ class SignalHandler:
         self.shutdown_requested = False
 
     def __call__(self, signum, frame):
-        print(f"\n[Main] Shutdown signal {signum} received. Finishing current tasks and saving...")
+        logger.info(
+            "[Main] Shutdown signal %s received. Finishing current tasks and saving...",
+            signum,
+        )
         self.shutdown_requested = True

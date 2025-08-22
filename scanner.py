@@ -3,6 +3,7 @@ import pickle
 import signal
 import sqlite3
 from multiprocessing import Pool, cpu_count
+import logging
 
 import cv2
 import face_recognition
@@ -13,6 +14,7 @@ from config import Config
 from signal_handler import SignalHandler
 from util import get_file_hash
 
+logger = logging.getLogger(__name__)
 config = Config()
 
 # --- CONFIGURATION ---
@@ -28,13 +30,17 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            print(f"  - [Thumb Error] Could not open video {video_path}")
+            logger.warning("  - [Thumb Error] Could not open video %s", video_path)
             return
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
         ret, frame = cap.read()
         cap.release()
         if not ret:
-            print(f"  - [Thumb Error] Could not read frame {frame_number} from {video_path}")
+            logger.warning(
+                "  - [Thumb Error] Could not read frame %s from %s",
+                frame_number,
+                video_path,
+            )
             return
 
         top, right, bottom, left = map(int, location_str.split(','))
@@ -42,12 +48,16 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
         thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{face_id}.jpg")
         cv2.imwrite(thumb_path, face_img)
     except Exception as e:
-        print(f"  - [Thumb Error] Failed to create thumbnail for {video_path}: {e}")
+        logger.warning(
+            "  - [Thumb Error] Failed to create thumbnail for %s: %s",
+            video_path,
+            e,
+        )
 
 
 def setup_database():
     """Initializes the SQLite database and creates the necessary tables."""
-    print("Setting up database...")
+    logger.info("Setting up database...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
         # Use file hash as the primary key to uniquely identify files regardless of path
@@ -74,7 +84,7 @@ def setup_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_file_hash ON faces (file_hash)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_cluster_id ON faces (cluster_id)')
         conn.commit()
-    print("Database setup complete.")
+    logger.info("Database setup complete.")
 
 
 def process_video_job(job_data):
@@ -84,12 +94,14 @@ def process_video_job(job_data):
     Returns its findings to the main process.
     """
     video_path, file_hash = job_data
-    print(f"[Worker] Processing: {video_path}")
+    logger.info("[Worker] Processing: %s", video_path)
     faces_found_in_video = []
     try:
         video_capture = cv2.VideoCapture(video_path)
         if not video_capture.isOpened():
-            print(f"  - [Worker Error] Could not open video file: {video_path}")
+            logger.warning(
+                "  - [Worker Error] Could not open video file: %s", video_path
+            )
             return (file_hash, video_path, False, [])
 
         frame_count = 0
@@ -117,10 +129,18 @@ def process_video_job(job_data):
                     faces_found_in_video.append((file_hash, frame_count, location_str, encoding_blob))
             frame_count += 1
         video_capture.release()
-        print(f"[Worker] Finished {video_path}. Found {len(faces_found_in_video)} faces.")
+        logger.info(
+            "[Worker] Finished %s. Found %s faces.",
+            video_path,
+            len(faces_found_in_video),
+        )
         return (file_hash, video_path, True, faces_found_in_video)
     except Exception as e:
-        print(f"  - [Worker Error] An error occurred while processing {video_path}: {e}")
+        logger.error(
+            "  - [Worker Error] An error occurred while processing %s: %s",
+            video_path,
+            e,
+        )
         return (file_hash, video_path, False, [])
 
 
@@ -128,8 +148,10 @@ def write_data_to_db(face_data, scanned_files_info):
     """Writes a chunk of collected data to the SQLite database and saves thumbnails."""
     if not face_data and not scanned_files_info:
         return
-    print(
-        f"[Main] Saving progress for {len(scanned_files_info)} videos and {len(face_data)} faces..."
+    logger.info(
+        "[Main] Saving progress for %s videos and %s faces...",
+        len(scanned_files_info),
+        len(face_data),
     )
     try:
         with sqlite3.connect(DATABASE_FILE, timeout=30) as conn:
@@ -156,9 +178,9 @@ def write_data_to_db(face_data, scanned_files_info):
                         save_thumbnail(face_id, video_path, frame_number, loc_str)
 
             conn.commit()
-        print("[Main] Save complete.")
+        logger.info("[Main] Save complete.")
     except Exception as e:
-        print(f"[Main] DATABASE ERROR during save: {e}")
+        logger.error("[Main] DATABASE ERROR during save: %s", e)
 
 
 def scan_videos_parallel(handler):
@@ -166,19 +188,21 @@ def scan_videos_parallel(handler):
     Scans videos in parallel, collecting results and saving them in chunks.
     Identifies videos by hash to avoid re-processing moved/renamed files.
     """
-    print("Starting parallel video scan...")
+    logger.info("Starting parallel video scan...")
     all_video_files = [os.path.join(r, f) for r, _, fs in os.walk(VIDEO_DIRECTORY) for f in fs if
                        f.lower().endswith(('.mp4', '.mkv', '.mov', '.avi'))]
 
     with sqlite3.connect(DATABASE_FILE) as conn:
         scanned_hashes = {row[0] for row in conn.execute("SELECT file_hash FROM scanned_files")}
 
-    print(
-        f"Found {len(all_video_files)} video files. Identifying new or changed files by hashing. This may take a moment...")
+    logger.info(
+        "Found %s video files. Identifying new or changed files by hashing. This may take a moment...",
+        len(all_video_files),
+    )
 
     # Determine the number of processes for hashing
     num_hashing_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
-    print(f"Hashing files using {num_hashing_processes} processes...")
+    logger.info("Hashing files using %s processes...", num_hashing_processes)
 
     # Hash files in parallel
     with Pool(processes=num_hashing_processes) as pool:
@@ -193,17 +217,23 @@ def scan_videos_parallel(handler):
 
         for filepath, file_hash in zip(filepaths_to_hash, results_iterator):
             if handler.shutdown_requested:
-                print("[Main] Shutdown detected during file hashing. Stopping.")
+                logger.warning("[Main] Shutdown detected during file hashing. Stopping.")
                 break
 
             processed_count += 1
-            print(f"[{processed_count}/{total_files}] Hashed: {filepath} | Hash: {file_hash if file_hash else 'FAILED'}")
+            logger.info(
+                "[%s/%s] Hashed: %s | Hash: %s",
+                processed_count,
+                total_files,
+                filepath,
+                file_hash if file_hash else "FAILED",
+            )
 
             if file_hash:
                 hashed_files[filepath] = file_hash
 
     if handler.shutdown_requested:
-        print("[Main] Hashing process stopped.")
+        logger.info("[Main] Hashing process stopped.")
         return
 
     jobs_to_process = []
@@ -213,22 +243,28 @@ def scan_videos_parallel(handler):
                 file_size = os.path.getsize(filepath)
                 jobs_to_process.append((filepath, file_hash, file_size))
             except OSError as e:
-                print(f"Warning: Could not get size for {filepath}: {e}")
+                logger.warning("Warning: Could not get size for %s: %s", filepath, e)
                 jobs_to_process.append((filepath, file_hash, 0))
 
     if not jobs_to_process:
-        print("No new videos to scan.")
+        logger.info("No new videos to scan.")
         return
 
     # Sort jobs by file size (smallest first)
     jobs_to_process.sort(key=lambda x: x[2])  # Sort by the file size (third element)
-    print(f"Found {len(jobs_to_process)} new videos to process, sorted by size (smallest first).")
+    logger.info(
+        "Found %s new videos to process, sorted by size (smallest first).",
+        len(jobs_to_process),
+    )
 
     # Convert back to (filepath, file_hash) tuples for the worker function
     jobs_to_process = [(filepath, file_hash) for filepath, file_hash, _ in jobs_to_process]
 
     num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
-    print(f"Creating a pool of {num_processes} worker processes. Press Ctrl+C to stop gracefully.")
+    logger.info(
+        "Creating a pool of %s worker processes. Press Ctrl+C to stop gracefully.",
+        num_processes,
+    )
 
     pending_faces = []
     pending_files_info = []
@@ -246,7 +282,7 @@ def scan_videos_parallel(handler):
                 pending_files_info.append((file_hash, video_path))
                 pending_faces.extend(faces_list)
             else:
-                print(f"[Main] Failed to process: {video_path}")
+                logger.warning("[Main] Failed to process: %s", video_path)
 
             # Save to DB when chunk size is reached
             if len(pending_files_info) >= SAVE_CHUNK_SIZE:
@@ -254,14 +290,14 @@ def scan_videos_parallel(handler):
                 pending_faces, pending_files_info = [], []  # Reset chunks
 
     # After the loop (or on shutdown), save any remaining data
-    print("[Main] All workers finished or shutdown initiated. Performing final save.")
+    logger.info("[Main] All workers finished or shutdown initiated. Performing final save.")
     write_data_to_db(pending_faces, pending_files_info)
-    print("Parallel video scanning complete.")
+    logger.info("Parallel video scanning complete.")
 
 
 def classify_new_faces():
     """Assigns person names to untagged faces based on known people."""
-    print("Starting automatic face classification...")
+    logger.info("Starting automatic face classification...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
 
@@ -271,7 +307,7 @@ def classify_new_faces():
         ).fetchall()
 
         if not rows:
-            print("No named faces available for classification.")
+            logger.info("No named faces available for classification.")
             return
 
         name_to_encs = {}
@@ -287,7 +323,7 @@ def classify_new_faces():
         ).fetchall()
 
         if not rows:
-            print("No unnamed faces to classify.")
+            logger.info("No unnamed faces to classify.")
             return
 
         threshold = config.AUTO_CLASSIFY_THRESHOLD
@@ -309,16 +345,19 @@ def classify_new_faces():
                 "UPDATE faces SET person_name = ? WHERE id = ?", updates
             )
             conn.commit()
-            print(f"Automatically assigned {len(updates)} faces to existing people.")
+            logger.info(
+                "Automatically assigned %s faces to existing people.",
+                len(updates),
+            )
         else:
-            print("No faces matched existing people within threshold.")
+            logger.info("No faces matched existing people within threshold.")
 
 
 def cluster_faces():
     """
     Fetches all face encodings from the database and uses DBSCAN to group them.
     """
-    print("Starting face clustering...")
+    logger.info("Starting face clustering...")
     with sqlite3.connect(DATABASE_FILE) as conn:
         cursor = conn.cursor()
         # Fetch all faces that haven't been assigned a person name yet
@@ -326,10 +365,10 @@ def cluster_faces():
             "SELECT id, face_encoding, cluster_id FROM faces WHERE person_name IS NULL"
         ).fetchall()
         if not rows:
-            print("No unnamed faces to cluster.")
+            logger.info("No unnamed faces to cluster.")
             return
 
-        print(f"Found {len(rows)} unnamed faces to cluster.")
+        logger.info("Found %s unnamed faces to cluster.", len(rows))
         face_ids = [row[0] for row in rows]
         encodings = [pickle.loads(row[1]) for row in rows]
         existing_cluster_ids = [row[2] for row in rows]
@@ -351,8 +390,9 @@ def cluster_faces():
             max_cluster_id_result[0] + 1 if max_cluster_id_result and max_cluster_id_result[0] is not None else 1
         )
 
-        print(
-            f"Clustering complete. Found {len(np.unique(clt.labels_))} unique groups (including noise)."
+        logger.info(
+            "Clustering complete. Found %s unique groups (including noise).",
+            len(np.unique(clt.labels_)),
         )
 
         # Map each cluster label to an existing or new cluster_id
@@ -380,11 +420,11 @@ def cluster_faces():
         if updates:
             cursor.executemany("UPDATE faces SET cluster_id = ? WHERE id = ?", updates)
             conn.commit()
-            print(f"Updated {len(updates)} faces with new cluster IDs.")
+            logger.info("Updated %s faces with new cluster IDs.", len(updates))
         else:
-            print("No new clusters were formed.")
+            logger.info("No new clusters were formed.")
 
-    print("Face clustering complete.")
+    logger.info("Face clustering complete.")
 
 
 if __name__ == "__main__":
@@ -401,6 +441,6 @@ if __name__ == "__main__":
         classify_new_faces()
         cluster_faces()
     else:
-        print("[Main] Clustering skipped due to script interruption.")
+        logger.info("[Main] Clustering skipped due to script interruption.")
 
-    print("[Main] Program finished.")
+    logger.info("[Main] Program finished.")

@@ -1,5 +1,8 @@
 import hashlib
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_file_hash(filepath, block_size=65536):
     """Calculates the SHA256 hash of a file to uniquely identify it.
@@ -31,8 +34,8 @@ def get_file_hash(filepath, block_size=65536):
 
         return sha256.hexdigest()
     except IOError:
-        print(f"  - [Hash Error] Could not read file: {filepath}")
+        logger.warning("  - [Hash Error] Could not read file: %s", filepath)
         return None
     except Exception as e:
-        print(f"  - [Hash Error] Error processing file {filepath}: {str(e)}")
+        logger.warning("  - [Hash Error] Error processing file %s: %s", filepath, str(e))
         return None
