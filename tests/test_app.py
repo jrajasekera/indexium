@@ -159,3 +159,44 @@ def test_tag_group_select_buttons(tmp_path, monkeypatch):
         assert b"Select All Faces" in resp.data
         assert b"Unselect All Faces" in resp.data
 
+
+def test_write_metadata_preserves_file_on_failure(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("original")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}})
+
+    def fake_run(stream, overwrite_output=True, quiet=True):
+        temp = video_path.parent / f".temp_{video_path.name}"
+        temp.write_text("temp")
+
+    monkeypatch.setattr(app_module.ffmpeg, "run", fake_run)
+
+    def fake_replace(src, dst):
+        raise OSError("replace fail")
+
+    monkeypatch.setattr(app_module.os, "replace", fake_replace)
+
+    with app_module.app.test_client() as client:
+        resp = client.post("/write_metadata", follow_redirects=False)
+        assert resp.status_code == 302
+
+    assert video_path.exists()
+    assert video_path.read_text() == "original"
+    temp_path = video_path.parent / f".temp_{video_path.name}"
+    assert not temp_path.exists()
+
