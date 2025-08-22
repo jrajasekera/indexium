@@ -1,9 +1,19 @@
 import pickle
 import sqlite3
+import time
+from multiprocessing import Pool
 
 import numpy as np
 
 import scanner as scanner_module
+
+DELAY_MAP = {}
+HASH_MAP = {}
+
+
+def fake_get_file_hash_with_path(filepath):
+    time.sleep(DELAY_MAP.get(filepath, 0))
+    return filepath, HASH_MAP.get(filepath)
 
 
 def setup_temp_db(tmp_path, monkeypatch):
@@ -76,3 +86,27 @@ def test_classify_new_faces_assigns_names(tmp_path, monkeypatch):
         "SELECT person_name FROM faces WHERE file_hash = 'h2'"
     ).fetchone()[0]
     assert name == "Alice"
+
+
+def test_hashing_out_of_order_results_map_correctly(tmp_path, monkeypatch):
+    f1 = tmp_path / "a.txt"
+    f2 = tmp_path / "b.txt"
+    f1.write_text("a")
+    f2.write_text("b")
+
+    filepaths = [str(f1), str(f2)]
+
+    HASH_MAP.clear()
+    HASH_MAP.update({str(f1): "hash1", str(f2): "hash2"})
+    DELAY_MAP.clear()
+    DELAY_MAP.update({str(f1): 0.1, str(f2): 0.0})
+
+    monkeypatch.setattr(scanner_module, "get_file_hash_with_path", fake_get_file_hash_with_path)
+
+    hashed_files = {}
+    with Pool(processes=2) as pool:
+        results_iterator = pool.imap_unordered(scanner_module.get_file_hash_with_path, filepaths)
+        for filepath, file_hash in results_iterator:
+            hashed_files[filepath] = file_hash
+
+    assert hashed_files == HASH_MAP
