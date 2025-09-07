@@ -1,6 +1,15 @@
 {% extends 'base.html' %}
 {% block title %}Tag Group #{{ cluster.id }}{% endblock %}
 {% block content %}
+<style>
+    .face-label.selected {
+        border: 3px solid #3b82f6; /* Tailwind blue-500 */
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+    .face-label.selected img {
+        opacity: 0.8;
+    }
+</style>
 <div class="max-w-6xl mx-auto">
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
@@ -27,7 +36,7 @@
             <div class="card-body">
                 <div class="flex flex-wrap justify-center gap-4 p-4 bg-base-200 rounded-lg">
                     {% for face in cluster.faces %}
-                        <label class="cursor-pointer group">
+                        <label class="cursor-pointer group face-label">
                             <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
                             <div class="relative">
                                 <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
@@ -245,12 +254,14 @@
         selectAllBtn.addEventListener('click', function() {
             document.querySelectorAll('.face-checkbox').forEach(function(cb) {
                 cb.checked = true;
+                cb.parentElement.classList.add('selected');
             });
         });
 
         unselectAllBtn.addEventListener('click', function() {
             document.querySelectorAll('.face-checkbox').forEach(function(cb) {
                 cb.checked = false;
+                cb.parentElement.classList.remove('selected');
             });
         });
     }
@@ -297,6 +308,17 @@
             checkDuplicate();
             nameInput.addEventListener('input', checkDuplicate);
         }
+
+        // Add visual feedback for face selection
+        document.querySelectorAll('.face-checkbox').forEach(function(cb) {
+            cb.addEventListener('change', function() {
+                if (this.checked) {
+                    this.parentElement.classList.add('selected');
+                } else {
+                    this.parentElement.classList.remove('selected');
+                }
+            });
+        });
     });
 </script>
 {% endblock %}
