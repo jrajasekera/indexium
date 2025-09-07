@@ -1,50 +1,224 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Video Face Tagger{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://unpkg.com/heroicons@2.1.5/24/outline/index.js" type="module"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
         .face-checkbox:checked + img {
-            border: 4px solid #3b82f6; /* blue-500 */
+            border: 4px solid #3b82f6;
             box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+        [data-theme="dark"] {
+            --tw-ring-color: rgb(59 130 246 / 0.5);
+        }
+        .nav-link {
+            @apply flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 hover:bg-base-200;
+        }
+        .nav-link.active {
+            @apply bg-primary text-primary-content shadow-md;
+        }
+        .sidebar {
+            position: fixed !important;
+            left: 0 !important;
+            top: 0 !important;
+            height: 100% !important;
+            width: 256px !important;
+            background-color: var(--fallback-b1,oklch(var(--b1))) !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+            transform: translateX(0) !important;
+            transition: transform 0.3s ease-in-out !important;
+            z-index: 50 !important;
+        }
+        .sidebar.collapsed {
+            transform: translateX(-100%) !important;
+        }
+        .main-content {
+            transition: margin-left 0.3s ease-in-out !important;
+            margin-left: 256px !important;
+        }
+        .main-content:not(.sidebar-open) {
+            margin-left: 0 !important;
         }
     </style>
 </head>
-<body class="bg-gray-100 text-gray-800">
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="container mx-auto p-4 flex justify-between items-center">
-            <nav class="flex items-center gap-6">
-                <a href="{{ url_for('index') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Home</a>
-                <a href="{{ url_for('list_people') }}" class="text-lg font-bold text-gray-900 hover:text-blue-600">Review People</a>
-            </nav>
-            <div class="text-center">
-                <span class="font-semibold">{{ stats.named_people_count }}</span> People Identified |
-                <span class="font-semibold">{{ stats.unnamed_groups_count }}</span> Groups Remaining
-            </div>
-            <form action="/write_metadata" method="post" onsubmit="return confirm('This will read and write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-                <button type="submit" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors">
-                    Write All Named Tags
-                </button>
-            </form>
-        </div>
-    </header>
-    <main class="container mx-auto p-4 sm:p-6 lg:p-8">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                <div class="mb-4 p-4 rounded-md {% if category == 'success' %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                    {{ message }}
+<body class="bg-base-200 text-base-content">
+    <!-- Sidebar -->
+    <div id="sidebar" class="sidebar">
+        <div class="p-6">
+            <div class="flex items-center gap-3 mb-8">
+                <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-primary-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
                 </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        {% block content %}{% endblock %}
-    </main>
+                <h1 class="text-xl font-bold">Indexium</h1>
+            </div>
+
+            <nav class="space-y-2">
+                <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' or request.endpoint == 'tag_group' %}active{% endif %}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5a2 2 0 012-2h4a2 2 0 012 2v2H8V5z"></path>
+                    </svg>
+                    <span>Tag Groups</span>
+                </a>
+
+                <a href="{{ url_for('list_people') }}" class="nav-link {% if request.endpoint == 'list_people' or request.endpoint == 'person_details' %}active{% endif %}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                    </svg>
+                    <span>People</span>
+                </a>
+
+                <div class="divider my-4"></div>
+
+                <button id="write-metadata-btn" class="nav-link w-full justify-start">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+                    </svg>
+                    <span>Write Metadata</span>
+                </button>
+            </nav>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div id="main-content" class="main-content sidebar-open min-h-screen">
+        <!-- Top Header -->
+        <header class="bg-base-100 shadow-sm sticky top-0 z-40">
+            <div class="navbar">
+                <div class="navbar-start">
+                    <button id="sidebar-toggle" class="btn btn-ghost btn-circle">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="navbar-center">
+                    <div class="stats stats-horizontal shadow">
+                        <div class="stat">
+                            <div class="stat-figure text-primary">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                                </svg>
+                            </div>
+                            <div class="stat-title">People Identified</div>
+                            <div class="stat-value text-primary">{{ stats.named_people_count }}</div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-figure text-secondary">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                                </svg>
+                            </div>
+                            <div class="stat-title">Groups Remaining</div>
+                            <div class="stat-value text-secondary">{{ stats.unnamed_groups_count }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="navbar-end">
+                    <button id="theme-toggle" class="btn btn-ghost btn-circle">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Page Content -->
+        <main class="p-6">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="toast toast-top toast-end z-50">
+                        {% for category, message in messages %}
+                        <div class="alert {% if category == 'success' %}alert-success{% else %}alert-error{% endif %}">
+                            <span>{{ message }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- Metadata Write Modal -->
+    <div id="metadata-modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Write Metadata to Videos</h3>
+            <p class="py-4">This will embed person tags into your video files' metadata. This process creates new files and replaces the originals. Make sure you have backups!</p>
+            <div class="modal-action">
+                <button class="btn" onclick="closeMetadataModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmMetadataWrite()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Sidebar toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('main-content');
+        const sidebarToggle = document.getElementById('sidebar-toggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-open');
+        });
+
+        // Theme toggle
+        const themeToggle = document.getElementById('theme-toggle');
+        const html = document.documentElement;
+
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            html.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+        });
+
+        // Load saved theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        html.setAttribute('data-theme', savedTheme);
+
+        // Metadata modal
+        const metadataModal = document.getElementById('metadata-modal');
+        const writeMetadataBtn = document.getElementById('write-metadata-btn');
+
+        writeMetadataBtn.addEventListener('click', () => {
+            metadataModal.classList.add('modal-open');
+        });
+
+        function closeMetadataModal() {
+            metadataModal.classList.remove('modal-open');
+        }
+
+        function confirmMetadataWrite() {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/write_metadata';
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        // Close modal when clicking outside
+        metadataModal.addEventListener('click', (e) => {
+            if (e.target === metadataModal) {
+                closeMetadataModal();
+            }
+        });
+    </script>
 </body>
 </html>

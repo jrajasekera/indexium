@@ -1,16 +1,125 @@
 {% extends 'base.html' %}
 {% block title %}All Done!{% endblock %}
 {% block content %}
-<div class="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md text-center">
-    <h2 class="text-3xl font-semibold text-green-600">All Done!</h2>
-    <p class="mt-4 text-gray-600">No more unnamed face groups found. You can run the scanner again, review the people you've already tagged, or write the tags to your video files.</p>
-    <div class="mt-8 flex flex-col gap-4">
-        <a href="{{ url_for('list_people') }}" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700">Review Named People</a>
-        <form action="/write_metadata" method="post" onsubmit="return confirm('This will write metadata to your video files. This is a non-destructive process that creates new files, but please ensure you have backups. Are you sure?');">
-            <button type="submit" class="w-full bg-green-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:bg-green-700">
-                Write All Named Tags to Files
-            </button>
-        </form>
+<div class="max-w-4xl mx-auto">
+    <!-- Success Hero -->
+    <div class="hero min-h-96 bg-base-200 rounded-box mb-8">
+        <div class="hero-content text-center">
+            <div class="max-w-md">
+                <div class="w-24 h-24 mx-auto mb-6 bg-success rounded-full flex items-center justify-center">
+                    <svg class="w-12 h-12 text-success-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <h1 class="text-5xl font-bold text-base-content">All Done!</h1>
+                <p class="py-6 text-base-content/70">Congratulations! You've successfully tagged all the face groups in your video collection.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Next Steps -->
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h2 class="card-title text-2xl justify-center mb-4">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                </svg>
+                What would you like to do next?
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Review People -->
+                <div class="card bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-colors">
+                    <div class="card-body items-center text-center">
+                        <svg class="w-12 h-12 text-primary mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                        </svg>
+                        <h3 class="card-title text-lg">Review People</h3>
+                        <p class="text-base-content/70 mb-4">Browse and manage all the people you've identified in your videos.</p>
+                        <a href="{{ url_for('list_people') }}" class="btn btn-primary">
+                            View People
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Write Metadata -->
+                <div class="card bg-success/5 border border-success/20 hover:bg-success/10 transition-colors">
+                    <div class="card-body items-center text-center">
+                        <svg class="w-12 h-12 text-success mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+                        </svg>
+                        <h3 class="card-title text-lg">Write Metadata</h3>
+                        <p class="text-base-content/70 mb-4">Embed person tags directly into your video files' metadata.</p>
+                        <button id="write-metadata-btn" class="btn btn-success">
+                            Write Tags
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Additional Options -->
+            <div class="divider">Or</div>
+
+            <div class="text-center">
+                <p class="text-base-content/70 mb-4">Want to process more videos? Run the scanner to detect faces in new files.</p>
+                <div class="alert alert-info">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <div>
+                        <h3 class="font-bold">Run Scanner</h3>
+                        <div class="text-xs">Execute <code class="bg-base-200 px-1 py-0.5 rounded">python scanner.py</code> in your terminal to scan new videos.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metadata Write Modal -->
+    <div id="metadata-modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Write Metadata to Videos</h3>
+            <p class="py-4">This will embed person tags into your video files' metadata. This process creates new files and replaces the originals. Make sure you have backups!</p>
+            <div class="modal-action">
+                <button class="btn" onclick="closeMetadataModal()">Cancel</button>
+                <button class="btn btn-success" onclick="confirmMetadataWrite()">Confirm</button>
+            </div>
+        </div>
     </div>
 </div>
+
+<script>
+    // Metadata modal
+    const metadataModal = document.getElementById('metadata-modal');
+    const writeMetadataBtn = document.getElementById('write-metadata-btn');
+
+    if (writeMetadataBtn && metadataModal) {
+        writeMetadataBtn.addEventListener('click', function() {
+            metadataModal.classList.add('modal-open');
+        });
+    }
+
+    function closeMetadataModal() {
+        if (metadataModal) {
+            metadataModal.classList.remove('modal-open');
+        }
+    }
+
+    function confirmMetadataWrite() {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/write_metadata';
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // Close modal when clicking outside
+    if (metadataModal) {
+        metadataModal.addEventListener('click', function(e) {
+            if (e.target === metadataModal) {
+                closeMetadataModal();
+            }
+        });
+    }
+</script>
 {% endblock %}
