@@ -122,12 +122,14 @@ def tag_group(cluster_id):
     ).fetchall()
 
     file_rows = conn.execute('''
-        SELECT DISTINCT sf.last_known_filepath
+        SELECT DISTINCT sf.last_known_filepath, sf.file_hash
         FROM faces f
         JOIN scanned_files sf ON f.file_hash = sf.file_hash
         WHERE f.cluster_id = ?
     ''', (cluster_id,)).fetchall()
     file_names = [os.path.basename(row['last_known_filepath']) for row in file_rows]
+    file_hashes = [row['file_hash'] for row in file_rows]
+    files_data = list(zip(file_names, file_hashes))
 
     if not sample_faces:
         flash(f"Cluster #{cluster_id} no longer exists or is empty.", "error")
@@ -146,7 +148,9 @@ def tag_group(cluster_id):
     return render_template('group_tagger.html',
                            cluster=cluster_data,
                            existing_names=existing_names,
-                           file_names=file_names)
+                           file_names=file_names,
+                           file_hashes=file_hashes,
+                           files_data=files_data)
 
 
 @app.route('/face_thumbnail/<int:face_id>')
@@ -448,6 +452,36 @@ def remove_faces():
     else:
         flash(f"Cluster #{cluster_id} is now empty and has been removed.", "info")
         return redirect(url_for('index'))
+
+
+@app.route('/remove_video_faces/<int:cluster_id>/<file_hash>', methods=['POST'])
+def remove_video_faces(cluster_id, file_hash):
+    """Removes all faces from a specific video in a cluster and creates a new cluster for them."""
+    conn = get_db_connection()
+
+    # Get all faces in the cluster that belong to the specified video
+    faces_to_move = conn.execute(
+        'SELECT id FROM faces WHERE cluster_id = ? AND file_hash = ?',
+        (cluster_id, file_hash)
+    ).fetchall()
+
+    if not faces_to_move:
+        flash("No faces found from this video in the current group.", "warning")
+        return redirect(url_for('tag_group', cluster_id=cluster_id))
+
+    # Generate a new cluster_id
+    max_cluster_id_result = conn.execute("SELECT MAX(cluster_id) FROM faces").fetchone()
+    new_cluster_id = (max_cluster_id_result[0] or 0) + 1
+
+    # Move the faces to the new cluster
+    face_ids = [face['id'] for face in faces_to_move]
+    placeholders = ', '.join('?' for _ in face_ids)
+    conn.execute(f'UPDATE faces SET cluster_id = ? WHERE id IN ({placeholders})',
+                 [new_cluster_id] + face_ids)
+    conn.commit()
+
+    flash(f"Removed {len(face_ids)} face(s) from this video and created new group #{new_cluster_id}.", "success")
+    return redirect(url_for('tag_group', cluster_id=cluster_id))
 
 
 if __name__ == '__main__':
