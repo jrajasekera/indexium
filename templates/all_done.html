@@ -50,7 +50,7 @@
                         </svg>
                         <h3 class="card-title text-lg">Write Metadata</h3>
                         <p class="text-base-content/70 mb-4">Embed person tags directly into your video files' metadata.</p>
-                        <button id="write-metadata-btn" class="btn btn-success">
+                        <button class="btn btn-success" type="button" data-action="open-metadata-modal">
                             Write Tags
                         </button>
                     </div>
@@ -75,51 +75,5 @@
         </div>
     </div>
 
-    <!-- Metadata Write Modal -->
-    <div id="metadata-modal" class="modal">
-        <div class="modal-box">
-            <h3 class="font-bold text-lg">Write Metadata to Videos</h3>
-            <p class="py-4">This will embed person tags into your video files' metadata. This process creates new files and replaces the originals. Make sure you have backups!</p>
-            <div class="modal-action">
-                <button class="btn" onclick="closeMetadataModal()">Cancel</button>
-                <button class="btn btn-success" onclick="confirmMetadataWrite()">Confirm</button>
-            </div>
-        </div>
-    </div>
 </div>
-
-<script>
-    // Metadata modal
-    const metadataModal = document.getElementById('metadata-modal');
-    const writeMetadataBtn = document.getElementById('write-metadata-btn');
-
-    if (writeMetadataBtn && metadataModal) {
-        writeMetadataBtn.addEventListener('click', function() {
-            metadataModal.classList.add('modal-open');
-        });
-    }
-
-    function closeMetadataModal() {
-        if (metadataModal) {
-            metadataModal.classList.remove('modal-open');
-        }
-    }
-
-    function confirmMetadataWrite() {
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/write_metadata';
-        document.body.appendChild(form);
-        form.submit();
-    }
-
-    // Close modal when clicking outside
-    if (metadataModal) {
-        metadataModal.addEventListener('click', function(e) {
-            if (e.target === metadataModal) {
-                closeMetadataModal();
-            }
-        });
-    }
-</script>
 {% endblock %}

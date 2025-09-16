@@ -1,15 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}Tag Group #{{ cluster.id }}{% endblock %}
 {% block content %}
-<style>
-    .face-label.selected {
-        border: 3px solid #3b82f6; /* Tailwind blue-500 */
-        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
-    }
-    .face-label.selected img {
-        opacity: 0.8;
-    }
-</style>
 <div class="max-w-6xl mx-auto">
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
@@ -36,14 +27,22 @@
             <div class="card-body">
                 <div class="flex flex-wrap justify-center gap-4 p-4 bg-base-200 rounded-lg">
                     {% for face in cluster.faces %}
-                        <label class="cursor-pointer group face-label">
-                            <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
-                            <div class="relative">
-                                <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
-                                     alt="Face from video"
-                                     class="w-24 h-24 object-cover rounded-lg shadow-md transition-all group-hover:scale-105">
-                                <div class="absolute inset-0 bg-primary/20 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <div class="w-6 h-6 bg-primary rounded-full flex items-center justify-center">
+                        <label class="cursor-pointer group" aria-label="Select face {{ loop.index }} for splitting">
+                            <input
+                                type="checkbox"
+                                name="face_ids"
+                                value="{{ face.id }}"
+                                class="face-checkbox sr-only"
+                            >
+                            <div class="face-thumb relative w-24 h-24 rounded-xl overflow-hidden shadow-md transition-all duration-200 group-hover:scale-105">
+                                <img
+                                    src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
+                                    alt="Face from video"
+                                    class="w-full h-full object-cover"
+                                    loading="lazy"
+                                >
+                                <div class="face-thumb-overlay absolute inset-0 bg-primary/25 backdrop-blur-sm rounded-xl opacity-0 transition-opacity flex items-center justify-center">
+                                    <div class="w-7 h-7 bg-primary rounded-full flex items-center justify-center shadow-lg">
                                         <svg class="w-4 h-4 text-primary-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                                         </svg>
@@ -63,35 +62,54 @@
 
                 <!-- Selection Controls -->
                 {% if cluster.faces %}
-                <div class="flex justify-center gap-3 mt-6">
-                    <button id="select-all" type="button" class="btn btn-outline btn-sm">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        Select All
-                    </button>
-                    <button id="unselect-all" type="button" class="btn btn-outline btn-sm">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        Unselect All
-                    </button>
-                </div>
+                <div class="mt-6 space-y-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center gap-3">
+                            <span id="selection-count" class="badge badge-primary badge-outline px-3 py-3 text-sm font-semibold">0 selected</span>
+                            <span class="text-xs text-base-content/70 hidden sm:inline">Tip: click faces to split or remove them.</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="select-all" type="button" class="btn btn-outline btn-sm">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                Select All
+                            </button>
+                            <button id="unselect-all" type="button" class="btn btn-outline btn-sm">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                Clear
+                            </button>
+                        </div>
+                    </div>
 
-                <!-- Action Buttons -->
-                <div class="flex justify-center gap-3 mt-4">
-                    <button type="submit" formaction="{{ url_for('split_cluster') }}" class="btn btn-warning btn-sm">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
-                        </svg>
-                        Split Selected
-                    </button>
-                    <button type="submit" formaction="{{ url_for('remove_faces') }}" class="btn btn-error btn-sm">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                        </svg>
-                        Remove Selected
-                    </button>
+                    <div class="flex flex-wrap justify-center gap-3">
+                        <button
+                            id="split-selected"
+                            type="submit"
+                            formaction="{{ url_for('split_cluster') }}"
+                            class="btn btn-warning btn-sm min-w-[11rem]"
+                            disabled
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                            </svg>
+                            Split Selected
+                        </button>
+                        <button
+                            id="remove-selected"
+                            type="submit"
+                            formaction="{{ url_for('remove_faces') }}"
+                            class="btn btn-error btn-sm min-w-[11rem]"
+                            disabled
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                            </svg>
+                            Remove Selected
+                        </button>
+                    </div>
                 </div>
                 {% endif %}
             </div>
@@ -170,7 +188,7 @@
                             Save
                         </button>
                     </div>
-                    <p id="name-error" class="text-error text-sm mt-2 hidden">This name has already been used.</p>
+                    <p id="name-error" class="text-error text-sm mt-2 hidden">This name already exists. Use the merge option below to combine groups.</p>
                 </div>
             </form>
         </div>
@@ -240,38 +258,62 @@
     const nameError = document.getElementById('name-error');
 
     function checkDuplicate() {
+        if (!nameInput || !nameError) return;
         const value = nameInput.value.trim().toLowerCase();
         const duplicate = existingNames.some(function(name) {
             return name.toLowerCase() === value;
         });
         if (duplicate) {
-            saveBtn.disabled = true;
-            saveBtn.classList.add('btn-disabled');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+            }
+            nameError.textContent = "This name already exists. Use the merge option below to combine groups.";
             nameError.classList.remove('hidden');
         } else {
-            saveBtn.disabled = false;
-            saveBtn.classList.remove('btn-disabled');
+            if (saveBtn) {
+                saveBtn.disabled = false;
+            }
             nameError.classList.add('hidden');
         }
     }
 
-    // Face selection
+    // Face selection state handling
+    const faceCheckboxes = Array.from(document.querySelectorAll('.face-checkbox'));
     const selectAllBtn = document.getElementById('select-all');
     const unselectAllBtn = document.getElementById('unselect-all');
+    const selectionBadge = document.getElementById('selection-count');
+    const splitBtn = document.getElementById('split-selected');
+    const removeBtn = document.getElementById('remove-selected');
 
-    if (selectAllBtn && unselectAllBtn) {
+    function updateSelectionState() {
+        const selectedCount = faceCheckboxes.filter((cb) => cb.checked).length;
+        if (selectionBadge) {
+            selectionBadge.textContent = `${selectedCount} selected`;
+        }
+        const hasSelection = selectedCount > 0;
+        if (splitBtn) {
+            splitBtn.disabled = !hasSelection;
+        }
+        if (removeBtn) {
+            removeBtn.disabled = !hasSelection;
+        }
+    }
+
+    if (selectAllBtn) {
         selectAllBtn.addEventListener('click', function() {
-            document.querySelectorAll('.face-checkbox').forEach(function(cb) {
+            faceCheckboxes.forEach((cb) => {
                 cb.checked = true;
-                cb.parentElement.classList.add('selected');
             });
+            updateSelectionState();
         });
+    }
 
+    if (unselectAllBtn) {
         unselectAllBtn.addEventListener('click', function() {
-            document.querySelectorAll('.face-checkbox').forEach(function(cb) {
+            faceCheckboxes.forEach((cb) => {
                 cb.checked = false;
-                cb.parentElement.classList.remove('selected');
             });
+            updateSelectionState();
         });
     }
 
@@ -318,16 +360,11 @@
             nameInput.addEventListener('input', checkDuplicate);
         }
 
-        // Add visual feedback for face selection
-        document.querySelectorAll('.face-checkbox').forEach(function(cb) {
-            cb.addEventListener('change', function() {
-                if (this.checked) {
-                    this.parentElement.classList.add('selected');
-                } else {
-                    this.parentElement.classList.remove('selected');
-                }
-            });
+        faceCheckboxes.forEach((cb) => {
+            cb.addEventListener('change', updateSelectionState);
         });
+
+        updateSelectionState();
     });
 </script>
 {% endblock %}

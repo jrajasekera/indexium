@@ -33,14 +33,22 @@
 
                 <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4 p-4 bg-base-200 rounded-lg max-h-96 overflow-y-auto">
                     {% for face in faces %}
-                        <label class="cursor-pointer group">
-                            <input type="checkbox" name="face_ids" value="{{ face.id }}" class="hidden face-checkbox">
-                            <div class="relative">
-                                <img src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
-                                     alt="Face of {{ person_name }}"
-                                     class="w-full h-20 object-cover rounded-lg shadow-md transition-all group-hover:scale-105">
-                                <div class="absolute inset-0 bg-primary/20 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <div class="w-5 h-5 bg-primary rounded-full flex items-center justify-center">
+                        <label class="cursor-pointer group" aria-label="Select face {{ loop.index }}">
+                            <input
+                                type="checkbox"
+                                name="face_ids"
+                                value="{{ face.id }}"
+                                class="face-checkbox sr-only"
+                            >
+                            <div class="face-thumb relative w-full h-20 rounded-xl overflow-hidden shadow-md transition-all duration-200 group-hover:scale-105">
+                                <img
+                                    src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
+                                    alt="Face of {{ person_name }}"
+                                    class="w-full h-full object-cover"
+                                    loading="lazy"
+                                >
+                                <div class="face-thumb-overlay absolute inset-0 bg-primary/25 backdrop-blur-sm rounded-xl opacity-0 transition-opacity flex items-center justify-center">
+                                    <div class="w-6 h-6 bg-primary rounded-full flex items-center justify-center shadow-lg">
                                         <svg class="w-3 h-3 text-primary-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                                         </svg>
@@ -52,24 +60,32 @@
                 </div>
 
                 {% if faces %}
-                <div class="flex justify-center gap-3 mt-6">
-                    <button id="select-all-faces" type="button" class="btn btn-outline btn-sm">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        Select All
-                    </button>
-                    <button id="unselect-all-faces" type="button" class="btn btn-outline btn-sm">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        Unselect All
-                    </button>
-                    <button type="submit" class="btn btn-error btn-sm">
+                <div class="mt-6 space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center gap-3">
+                            <span id="person-selection-count" class="badge badge-primary badge-outline px-3 py-3 text-sm font-semibold">0 selected</span>
+                            <span class="text-xs text-base-content/70 hidden sm:inline">Choose faces to discard or unassign.</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="select-all-faces" type="button" class="btn btn-outline btn-sm">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                Select All
+                            </button>
+                            <button id="unselect-all-faces" type="button" class="btn btn-outline btn-sm">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    <button id="remove-selected-faces" type="submit" class="btn btn-error btn-sm w-full sm:w-auto" disabled>
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                         </svg>
-                        Remove Selected
+                        Remove Selected Faces
                     </button>
                 </div>
                 {% endif %}
@@ -162,20 +178,43 @@
     // Face selection
     const selectAllBtn = document.getElementById('select-all-faces');
     const unselectAllBtn = document.getElementById('unselect-all-faces');
+    const removeFacesBtn = document.getElementById('remove-selected-faces');
+    const selectionBadge = document.getElementById('person-selection-count');
+    const faceCheckboxes = Array.from(document.querySelectorAll('.face-checkbox'));
 
-    if (selectAllBtn && unselectAllBtn) {
+    function updateSelectionState() {
+        const selectedCount = faceCheckboxes.filter((cb) => cb.checked).length;
+        if (selectionBadge) {
+            selectionBadge.textContent = `${selectedCount} selected`;
+        }
+        if (removeFacesBtn) {
+            removeFacesBtn.disabled = selectedCount === 0;
+        }
+    }
+
+    if (selectAllBtn) {
         selectAllBtn.addEventListener('click', function() {
-            document.querySelectorAll('.face-checkbox').forEach(function(cb) {
+            faceCheckboxes.forEach((cb) => {
                 cb.checked = true;
             });
-        });
-
-        unselectAllBtn.addEventListener('click', function() {
-            document.querySelectorAll('.face-checkbox').forEach(function(cb) {
-                cb.checked = false;
-            });
+            updateSelectionState();
         });
     }
+
+    if (unselectAllBtn) {
+        unselectAllBtn.addEventListener('click', function() {
+            faceCheckboxes.forEach((cb) => {
+                cb.checked = false;
+            });
+            updateSelectionState();
+        });
+    }
+
+    faceCheckboxes.forEach((cb) => {
+        cb.addEventListener('change', updateSelectionState);
+    });
+
+    updateSelectionState();
 
     // Modals
     const unnameModal = document.getElementById('unname-modal');
