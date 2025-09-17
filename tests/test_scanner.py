@@ -82,10 +82,13 @@ def test_classify_new_faces_assigns_names(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner_module.config, "AUTO_CLASSIFY_THRESHOLD", 0.3)
     scanner_module.classify_new_faces()
 
-    name = conn.execute(
-        "SELECT person_name FROM faces WHERE file_hash = 'h2'"
-    ).fetchone()[0]
-    assert name == "Alice"
+    row = conn.execute(
+        "SELECT person_name, suggested_person_name, suggested_confidence, suggestion_status FROM faces WHERE file_hash = 'h2'"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] == "Alice"
+    assert 0 < row[2] <= 1
+    assert row[3] == "pending"
 
 
 def test_hashing_out_of_order_results_map_correctly(tmp_path, monkeypatch):
@@ -110,3 +113,30 @@ def test_hashing_out_of_order_results_map_correctly(tmp_path, monkeypatch):
             hashed_files[filepath] = file_hash
 
     assert hashed_files == HASH_MAP
+
+
+def test_classify_new_faces_skips_rejected(tmp_path, monkeypatch):
+    db_path = setup_temp_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+
+    known = np.array([0.0, 0.0])
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", pickle.dumps(known), "Alice"),
+    )
+
+    unknown = np.array([0.05, 0.0])
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", pickle.dumps(unknown), "Alice", 0.2, "rejected"),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(scanner_module.config, "AUTO_CLASSIFY_THRESHOLD", 0.3)
+    scanner_module.classify_new_faces()
+
+    row = conn.execute(
+        "SELECT suggested_person_name, suggestion_status FROM faces WHERE file_hash = 'h2'"
+    ).fetchone()
+    assert row[0] == "Alice"
+    assert row[1] == "rejected"

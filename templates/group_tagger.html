@@ -18,6 +18,38 @@
         </div>
     </div>
 
+    {% if suggestions %}
+        {% set top = suggestions[0] %}
+        <div class="alert bg-base-100 shadow-lg mb-6">
+            <div>
+                <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20 10 10 0 010-20z" />
+                </svg>
+            </div>
+            <div>
+                <h3 class="font-semibold">Suggested match: {{ top.name }}</h3>
+                <p class="text-sm text-base-content/70">
+                    Confidence {{ (top.avg_confidence or 0) * 100 | round(0) }}% · {{ top.face_count }} face{{ 's' if top.face_count != 1 else '' }} in this group
+                </p>
+                {% if suggestions|length > 1 %}
+                    <p class="text-xs text-base-content/60">Other candidates: {% for s in suggestions[1:] %}{{ s.name }} ({{ (s.avg_confidence or 0) * 100 | round(0) }}%){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                {% endif %}
+            </div>
+            <div class="flex gap-2">
+                <form action="{{ url_for('accept_suggestion') }}" method="post" class="inline-flex">
+                    <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+                    <input type="hidden" name="suggestion_name" value="{{ top.name }}">
+                    <button type="submit" class="btn btn-primary btn-sm">Accept</button>
+                </form>
+                <form action="{{ url_for('reject_suggestion') }}" method="post" class="inline-flex">
+                    <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+                    <input type="hidden" name="suggestion_name" value="{{ top.name }}">
+                    <button type="submit" class="btn btn-ghost btn-sm">Reject</button>
+                </form>
+            </div>
+        </div>
+    {% endif %}
+
     <!-- Face Selection Form -->
     <form id="face-selection-form" action="{{ url_for('split_cluster') }}" method="post">
         <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
@@ -41,6 +73,13 @@
                                     class="w-full h-full object-cover"
                                     loading="lazy"
                                 >
+                                {% if face.suggested_person_name and (face.suggestion_status in [None, 'pending']) %}
+                                <div class="absolute inset-x-1 bottom-1">
+                                    <div class="badge badge-primary badge-sm w-full justify-center">
+                                        {{ face.suggested_person_name }} · {{ (face.suggested_confidence or 0) * 100 | round(0) }}%
+                                    </div>
+                                </div>
+                                {% endif %}
                                 <div class="face-thumb-overlay absolute inset-0 bg-primary/25 backdrop-blur-sm rounded-xl opacity-0 transition-opacity flex items-center justify-center">
                                     <div class="w-7 h-7 bg-primary rounded-full flex items-center justify-center shadow-lg">
                                         <svg class="w-4 h-4 text-primary-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">

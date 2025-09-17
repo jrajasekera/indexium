@@ -39,7 +39,7 @@ def validate_video_file(video_path: str) -> Tuple[bool, Optional[str]]:
     Returns (is_valid, error_message).
     """
     try:
-        probe = ffmpeg.probe(video_path, quiet=True)
+        probe = ffmpeg.probe(video_path, loglevel="error")
         format_info = probe.get('format', {})
         duration = float(format_info.get('duration', 0))
 
@@ -202,9 +202,24 @@ def setup_database():
                 face_encoding BLOB NOT NULL,
                 cluster_id INTEGER DEFAULT NULL,
                 person_name TEXT DEFAULT NULL,
+                suggested_person_name TEXT DEFAULT NULL,
+                suggested_confidence REAL DEFAULT NULL,
+                suggestion_status TEXT DEFAULT NULL,
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
         ''')
+
+        cursor.execute("PRAGMA table_info(faces)")
+        face_columns = {row[1] for row in cursor.fetchall()}
+        if 'suggested_person_name' not in face_columns:
+            logger.info("Adding suggested_person_name column to faces table...")
+            cursor.execute("ALTER TABLE faces ADD COLUMN suggested_person_name TEXT DEFAULT NULL")
+        if 'suggested_confidence' not in face_columns:
+            logger.info("Adding suggested_confidence column to faces table...")
+            cursor.execute("ALTER TABLE faces ADD COLUMN suggested_confidence REAL DEFAULT NULL")
+        if 'suggestion_status' not in face_columns:
+            logger.info("Adding suggestion_status column to faces table...")
+            cursor.execute("ALTER TABLE faces ADD COLUMN suggestion_status TEXT DEFAULT NULL")
 
         # Check and add new columns to scanned_files table
         cursor.execute("PRAGMA table_info(scanned_files)")
@@ -234,6 +249,7 @@ def setup_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_cluster_person ON faces (cluster_id, person_name)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_file_person ON faces (file_hash, person_name)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces (person_name, id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_suggestion ON faces (cluster_id, suggested_person_name)')
 
         conn.commit()
     logger.info("Database setup complete.")
@@ -537,7 +553,8 @@ def classify_new_faces():
 
         # Fetch faces without a name
         rows = cursor.execute(
-            "SELECT id, face_encoding FROM faces WHERE person_name IS NULL"
+            "SELECT id, face_encoding, suggested_person_name, suggestion_status, suggested_confidence "
+            "FROM faces WHERE person_name IS NULL"
         ).fetchall()
 
         if not rows:
@@ -546,7 +563,8 @@ def classify_new_faces():
 
         threshold = config.AUTO_CLASSIFY_THRESHOLD
         updates = []
-        for face_id, enc_blob in rows:
+        clears = []
+        for face_id, enc_blob, current_suggestion, current_status, current_confidence in rows:
             enc = pickle.loads(enc_blob)
             best_name = None
             best_dist = None
@@ -556,14 +574,35 @@ def classify_new_faces():
                     best_dist = dist
                     best_name = name
             if best_dist is not None and best_dist <= threshold:
-                updates.append((best_name, face_id))
+                confidence = max(0.0, 1.0 - (best_dist / threshold))
+                # Skip updating if the same suggestion was explicitly rejected
+                if current_status == 'rejected' and current_suggestion == best_name:
+                    continue
+                if (
+                    current_suggestion != best_name
+                    or current_confidence is None
+                    or confidence > (current_confidence or 0)
+                    or current_status not in ('pending', None)
+                ):
+                    updates.append((best_name, confidence, 'pending', face_id))
+            else:
+                if current_suggestion is not None or current_confidence is not None or current_status is not None:
+                    clears.append((face_id,))
 
         if updates:
             cursor.executemany(
-                "UPDATE faces SET person_name = ? WHERE id = ?", updates
+                "UPDATE faces SET suggested_person_name = ?, suggested_confidence = ?, suggestion_status = ? WHERE id = ?",
+                updates
             )
             conn.commit()
-            print(f"Automatically assigned {len(updates)} faces to existing people.")
+            print(f"Added suggestions for {len(updates)} faces.")
+        if clears:
+            cursor.executemany(
+                "UPDATE faces SET suggested_person_name = NULL, suggested_confidence = NULL, suggestion_status = NULL WHERE id = ?",
+                clears
+            )
+            conn.commit()
+            print(f"Cleared suggestions for {len(clears)} faces.")
         else:
             print("No faces matched existing people within threshold.")
 

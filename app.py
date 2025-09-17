@@ -117,7 +117,8 @@ def tag_group(cluster_id):
     offset = (page - 1) * PAGE_SIZE
 
     sample_faces = conn.execute(
-        "SELECT id FROM faces WHERE cluster_id = ? LIMIT ? OFFSET ?",
+        "SELECT id, suggested_person_name, suggested_confidence, suggestion_status FROM faces "
+        "WHERE cluster_id = ? LIMIT ? OFFSET ?",
         (cluster_id, PAGE_SIZE, offset),
     ).fetchall()
 
@@ -139,6 +140,19 @@ def tag_group(cluster_id):
         'SELECT DISTINCT person_name FROM faces WHERE person_name IS NOT NULL ORDER BY person_name').fetchall()
 
     existing_names = [name['person_name'] for name in names]
+
+    suggestions = conn.execute('''
+        SELECT suggested_person_name AS name,
+               AVG(suggested_confidence) AS avg_confidence,
+               COUNT(*) AS face_count
+        FROM faces
+        WHERE cluster_id = ?
+          AND suggested_person_name IS NOT NULL
+          AND (suggestion_status IS NULL OR suggestion_status = 'pending')
+        GROUP BY suggested_person_name
+        ORDER BY avg_confidence DESC, face_count DESC
+    ''', (cluster_id,)).fetchall()
+
     cluster_data = {
         'id': cluster_id,
         'faces': sample_faces,
@@ -150,7 +164,8 @@ def tag_group(cluster_id):
                            existing_names=existing_names,
                            file_names=file_names,
                            file_hashes=file_hashes,
-                           files_data=files_data)
+                           files_data=files_data,
+                           suggestions=suggestions)
 
 
 @app.route('/face_thumbnail/<int:face_id>')
@@ -171,6 +186,16 @@ def name_cluster():
     if cluster_id and person_name:
         conn = get_db_connection()
         conn.execute('UPDATE faces SET person_name = ? WHERE cluster_id = ?', (person_name, cluster_id))
+        conn.execute('''
+            UPDATE faces
+            SET suggestion_status = CASE
+                    WHEN suggested_person_name = ? THEN 'accepted'
+                    ELSE 'cleared'
+                END,
+                suggested_person_name = NULL,
+                suggested_confidence = NULL
+            WHERE cluster_id = ?
+        ''', (person_name, cluster_id))
         conn.commit()
         flash(f"Assigned name '{person_name}' to cluster #{cluster_id}", "success")
     return redirect(url_for('index'))
@@ -186,6 +211,54 @@ def delete_cluster():
         conn.commit()
         flash(f"Deleted all faces for cluster #{cluster_id}", "success")
     return redirect(url_for('index'))
+
+
+@app.route('/accept_suggestion', methods=['POST'])
+def accept_suggestion():
+    """Accepts an automatic naming suggestion for a cluster."""
+    cluster_id = request.form.get('cluster_id')
+    suggestion_name = request.form.get('suggestion_name', '').strip()
+
+    if not cluster_id or not suggestion_name:
+        flash("Invalid suggestion payload.", "error")
+        return redirect(url_for('index'))
+
+    conn = get_db_connection()
+    conn.execute('UPDATE faces SET person_name = ? WHERE cluster_id = ?', (suggestion_name, cluster_id))
+    conn.execute('''
+        UPDATE faces
+        SET suggestion_status = CASE
+                WHEN suggested_person_name = ? THEN 'accepted'
+                ELSE 'cleared'
+            END,
+            suggested_person_name = NULL,
+            suggested_confidence = NULL
+        WHERE cluster_id = ?
+    ''', (suggestion_name, cluster_id))
+    conn.commit()
+    flash(f"Accepted suggestion '{suggestion_name}' for cluster #{cluster_id}.", "success")
+    return redirect(url_for('index'))
+
+
+@app.route('/reject_suggestion', methods=['POST'])
+def reject_suggestion():
+    """Rejects an automatic naming suggestion for a cluster."""
+    cluster_id = request.form.get('cluster_id')
+    suggestion_name = request.form.get('suggestion_name', '').strip()
+
+    if not cluster_id or not suggestion_name:
+        flash("Invalid suggestion payload.", "error")
+        return redirect(url_for('index'))
+
+    conn = get_db_connection()
+    conn.execute('''
+        UPDATE faces
+        SET suggestion_status = 'rejected'
+        WHERE cluster_id = ? AND suggested_person_name = ?
+    ''', (cluster_id, suggestion_name))
+    conn.commit()
+    flash(f"Rejected suggestion '{suggestion_name}' for cluster #{cluster_id}.", "info")
+    return redirect(url_for('tag_group', cluster_id=cluster_id))
 
 
 @app.route('/skip_cluster/<int:cluster_id>')
@@ -390,6 +463,16 @@ def merge_clusters():
     # Reassign the old cluster_id and set the name
     conn.execute('UPDATE faces SET cluster_id = ?, person_name = ? WHERE cluster_id = ?',
                  (to_cluster_id, to_person_name, from_cluster_id))
+    conn.execute('''
+        UPDATE faces
+        SET suggestion_status = CASE
+                WHEN suggested_person_name = ? THEN 'accepted'
+                ELSE 'cleared'
+            END,
+            suggested_person_name = NULL,
+            suggested_confidence = NULL
+        WHERE cluster_id = ?
+    ''', (to_person_name, to_cluster_id))
     conn.commit()
 
     flash(f"Successfully merged group #{from_cluster_id} into '{to_person_name}'.", "success")

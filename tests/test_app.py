@@ -160,6 +160,80 @@ def test_tag_group_select_buttons(tmp_path, monkeypatch):
         assert b"Unselect All Faces" in resp.data
 
 
+def test_accept_suggestion_route(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice", 0.9, "pending"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/accept_suggestion",
+            data={"cluster_id": "1", "suggestion_name": "Alice"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn.close()
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT person_name, suggested_person_name, suggestion_status FROM faces WHERE cluster_id = 1"
+    ).fetchone()
+    assert row[0] == "Alice"
+    assert row[1] is None
+    assert row[2] == "accepted"
+
+
+def test_reject_suggestion_route(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Bob", 0.7, "pending"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/reject_suggestion",
+            data={"cluster_id": "1", "suggestion_name": "Bob"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn.close()
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT person_name, suggested_person_name, suggestion_status FROM faces WHERE cluster_id = 1"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] == "Bob"
+    assert row[2] == "rejected"
+
+
+def test_tag_group_shows_suggestion(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Carol", 0.8, "pending"),
+    )
+    conn.commit()
+
+    conn.close()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/group/1")
+        assert resp.status_code == 200
+        assert b"Suggested match" in resp.data
+        assert b"Carol" in resp.data
+
 def test_write_metadata_preserves_file_on_failure(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)
@@ -199,4 +273,3 @@ def test_write_metadata_preserves_file_on_failure(tmp_path, monkeypatch):
     assert video_path.read_text() == "original"
     temp_path = video_path.parent / f".temp_{video_path.name}"
     assert not temp_path.exists()
-
