@@ -120,6 +120,35 @@ def test_delete_selected_faces_route(tmp_path, monkeypatch):
     assert not (thumb_dir / f"{delete_id}.jpg").exists()
 
 
+def test_mark_unknown_route(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice", 0.8, "pending"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/mark_unknown",
+            data={"cluster_id": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT cluster_id, person_name, suggested_person_name, suggested_confidence, suggestion_status FROM faces"
+    ).fetchone()
+    assert row[0] == -1
+    assert row[1] == "Unknown"
+    assert row[2] is None
+    assert row[3] is None
+    assert row[4] is None
+
+
 def test_remove_person_faces_route(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)

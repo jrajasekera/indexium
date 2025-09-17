@@ -542,7 +542,8 @@ def classify_new_faces():
 
         # Fetch encodings of already named people
         rows = cursor.execute(
-            "SELECT person_name, face_encoding FROM faces WHERE person_name IS NOT NULL"
+            "SELECT person_name, face_encoding FROM faces WHERE person_name IS NOT NULL AND person_name != ?",
+            ("Unknown",)
         ).fetchall()
 
         if not rows:
@@ -576,7 +577,7 @@ def classify_new_faces():
 
         # Fetch faces without a name
         rows = cursor.execute(
-            "SELECT id, face_encoding, suggested_person_name, suggestion_status, suggested_confidence "
+            "SELECT id, face_encoding, suggested_person_name, suggestion_status, suggested_confidence, cluster_id "
             "FROM faces WHERE person_name IS NULL"
         ).fetchall()
 
@@ -587,8 +588,11 @@ def classify_new_faces():
         updates = []
         clears = []
         candidate_updates = []
-        for face_id, enc_blob, current_suggestion, current_status, current_confidence in rows:
+        for face_id, enc_blob, current_suggestion, current_status, current_confidence, cluster_id in rows:
             enc = pickle.loads(enc_blob)
+            if cluster_id == -1:
+                candidate_updates.append((None, face_id))
+                continue
             if not person_models:
                 candidate_updates.append((None, face_id))
                 continue
@@ -611,7 +615,8 @@ def classify_new_faces():
 
             top_candidates_payload = []
             for cand_name, cand_nearest, _, cand_score, cand_threshold in candidates[:5]:
-                cand_confidence = max(0.0, min(1.0, 1.0 - (cand_nearest / max(cand_threshold, 1e-6))))
+                safe_threshold = cand_threshold if cand_threshold and cand_threshold > 0 else base_threshold
+                cand_confidence = max(0.0, min(1.0, 1.0 - (cand_nearest / max(safe_threshold, 1e-6))))
                 if cand_name == best_name and second_candidate:
                     separation = float(second_candidate[3] - best_score)
                     separation_factor = max(0.0, min(1.0, separation / 0.2))

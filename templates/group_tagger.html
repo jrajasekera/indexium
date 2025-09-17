@@ -98,11 +98,11 @@
 
                         {% if cluster.faces %}
                         <div class="mt-6 space-y-4">
-                            <div class="flex flex-wrap items-center justify-between gap-3">
-                                <div class="flex items-center gap-3">
-                                    <span id="selection-count" class="badge badge-primary badge-outline px-3 py-3 text-sm font-semibold">0 selected</span>
-                                    <span class="text-xs text-base-content/70 hidden sm:inline">Tip: click faces to split or remove them.</span>
-                                </div>
+                           <div class="flex flex-wrap items-center justify-between gap-3">
+                               <div class="flex items-center gap-3">
+                                   <span id="selection-count" class="badge badge-primary badge-outline px-3 py-3 text-sm font-semibold">0 selected</span>
+                                   <span class="text-xs text-base-content/70 hidden sm:inline">Tip: click faces to split or remove them.</span>
+                               </div>
                                 <div class="flex gap-2">
                                     <button id="select-all" type="button" class="btn btn-outline btn-sm">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -120,7 +120,7 @@
                             </div>
 
                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                <button
+                               <button
                                     id="split-selected"
                                     type="submit"
                                     formaction="{{ url_for('split_cluster') }}"
@@ -132,7 +132,7 @@
                                     </svg>
                                     Split Selected
                                 </button>
-                                <button
+                               <button
                                     id="delete-selected"
                                     type="submit"
                                     formaction="{{ url_for('delete_selected_faces') }}"
@@ -144,6 +144,15 @@
                                     </svg>
                                     Delete Selected
                                 </button>
+                                <form action="{{ url_for('mark_unknown') }}" method="post" class="inline">
+                                    <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+                                    <button type="submit" class="btn btn-outline btn-sm" {% if cluster_is_unknown %}disabled{% endif %}>
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4m12 11v4m-2-2h4M5 21H3m2 0v-4M3 17h4m10-12h4m-2-2v4M9 9l6 6m0-6l-6 6"></path>
+                                        </svg>
+                                        Mark as Unknown
+                                    </button>
+                                </form>
                             </div>
                         </div>
                         {% endif %}

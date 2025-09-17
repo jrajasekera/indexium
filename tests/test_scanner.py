@@ -176,3 +176,29 @@ def test_classify_new_faces_ambiguous_does_not_suggest(tmp_path, monkeypatch):
     assert row[1] is None
     assert row[2] is None
     assert row[3] is not None
+
+
+def test_unknown_faces_excluded_from_models(tmp_path, monkeypatch):
+    db_path = setup_temp_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+
+    unknown_enc = np.array([0.0, 0.0])
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name, cluster_id) VALUES (?, ?, ?, ?, ?, ?)",
+        ("hu", 0, "0,0,0,0", pickle.dumps(unknown_enc), "Unknown", -1),
+    )
+
+    unlabeled_enc = np.array([0.1, 0.1])
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("hx", 0, "0,0,0,0", pickle.dumps(unlabeled_enc), 5),
+    )
+    conn.commit()
+
+    scanner_module.classify_new_faces()
+
+    row = conn.execute(
+        "SELECT suggested_person_name, suggested_candidates FROM faces WHERE file_hash = 'hx'"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] is None

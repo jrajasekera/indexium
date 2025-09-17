@@ -78,10 +78,13 @@ def index():
     base_query = '''
         SELECT MIN(cluster_id) as id
         FROM faces
-        WHERE cluster_id IS NOT NULL AND person_name IS NULL
+        WHERE cluster_id IS NOT NULL
+          AND person_name IS NULL
+          AND cluster_id != ?
     '''
 
     params = []
+    params.append(-1)
     if skipped:
         placeholders = ','.join('?' for _ in skipped)
         query = base_query + f" AND cluster_id NOT IN ({placeholders})"
@@ -93,7 +96,7 @@ def index():
 
     if (not next_group or next_group['id'] is None) and skipped:
         session.pop('skipped_clusters', None)
-        next_group = conn.execute(base_query).fetchone()
+        next_group = conn.execute(base_query, ( -1, )).fetchone()
 
     if next_group and next_group['id'] is not None:
         return redirect(url_for('tag_group', cluster_id=next_group['id']))
@@ -201,7 +204,8 @@ def tag_group(cluster_id):
                            file_hashes=file_hashes,
                            files_data=files_data,
                            suggestion_candidates=suggestion_candidates,
-                           primary_suggestion=primary_suggestion)
+                           primary_suggestion=primary_suggestion,
+                           cluster_is_unknown=(cluster_id == -1))
 
 
 @app.route('/face_thumbnail/<int:face_id>')
@@ -220,6 +224,9 @@ def name_cluster():
     person_name = request.form['person_name'].strip()
 
     if cluster_id and person_name:
+        if person_name.lower() == 'unknown':
+            flash("'Unknown' is reserved. Use the button to mark as unknown instead.", "error")
+            return redirect(url_for('tag_group', cluster_id=cluster_id))
         conn = get_db_connection()
         conn.execute('UPDATE faces SET person_name = ? WHERE cluster_id = ?', (person_name, cluster_id))
         conn.execute('''
@@ -235,6 +242,42 @@ def name_cluster():
         ''', (person_name, cluster_id))
         conn.commit()
         flash(f"Assigned name '{person_name}' to cluster #{cluster_id}", "success")
+    return redirect(url_for('index'))
+
+
+@app.route('/mark_unknown', methods=['POST'])
+def mark_unknown():
+    """Marks the current cluster as Unknown, moving faces into the Unknown group."""
+    cluster_id = request.form['cluster_id']
+    if not cluster_id:
+        flash("Invalid cluster.", "error")
+        return redirect(url_for('index'))
+
+    cluster_id = int(cluster_id)
+    if cluster_id == -1:
+        flash("Cluster is already Unknown.", "info")
+        return redirect(url_for('tag_group', cluster_id=cluster_id))
+
+    conn = get_db_connection()
+
+    # Assign person_name = 'Unknown'
+    conn.execute('UPDATE faces SET person_name = ? WHERE cluster_id = ?', ('Unknown', cluster_id))
+
+    # Move the faces to the Unknown cluster (-1)
+    conn.execute('UPDATE faces SET cluster_id = -1 WHERE cluster_id = ?', (cluster_id,))
+
+    conn.execute('''
+        UPDATE faces
+        SET suggestion_status = NULL,
+            suggested_person_name = NULL,
+            suggested_confidence = NULL,
+            suggested_candidates = NULL
+        WHERE cluster_id = -1
+    ''')
+
+    conn.commit()
+
+    flash(f"Marked cluster #{cluster_id} as Unknown.", "success")
     return redirect(url_for('index'))
 
 
@@ -257,6 +300,9 @@ def delete_cluster():
     """Deletes all data associated with a cluster_id."""
     cluster_id = request.form['cluster_id']
     if cluster_id:
+        if int(cluster_id) == -1:
+            flash("Cannot delete the Unknown group.", "error")
+            return redirect(url_for('tag_group', cluster_id=cluster_id))
         conn = get_db_connection()
         conn.execute('DELETE FROM faces WHERE cluster_id = ?', (cluster_id,))
         conn.commit()
@@ -500,6 +546,10 @@ def merge_clusters():
 
     if not to_person_name:
         flash("You must select a person to merge with.", "error")
+        return redirect(url_for('tag_group', cluster_id=from_cluster_id))
+
+    if to_person_name.lower() == 'unknown':
+        flash("Cannot merge into the Unknown person.", "error")
         return redirect(url_for('tag_group', cluster_id=from_cluster_id))
 
     conn = get_db_connection()
