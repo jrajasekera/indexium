@@ -238,6 +238,20 @@ def name_cluster():
     return redirect(url_for('index'))
 
 
+def _delete_faces(conn, cluster_id, face_ids):
+    placeholders = ', '.join('?' for _ in face_ids)
+    conn.execute(f'DELETE FROM faces WHERE id IN ({placeholders})', face_ids)
+    conn.commit()
+
+    for fid in face_ids:
+        thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{fid}.jpg")
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+
+    remaining = conn.execute('SELECT 1 FROM faces WHERE cluster_id = ? LIMIT 1', (cluster_id,)).fetchone()
+    return remaining is not None
+
+
 @app.route('/delete_cluster', methods=['POST'])
 def delete_cluster():
     """Deletes all data associated with a cluster_id."""
@@ -557,18 +571,30 @@ def remove_faces():
         return redirect(url_for('tag_group', cluster_id=cluster_id))
 
     conn = get_db_connection()
-    placeholders = ', '.join('?' for _ in face_ids)
-    conn.execute(f'DELETE FROM faces WHERE id IN ({placeholders})', face_ids)
-    conn.commit()
-
-    for fid in face_ids:
-        thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{fid}.jpg")
-        if os.path.exists(thumb_path):
-            os.remove(thumb_path)
-
-    remaining = conn.execute('SELECT 1 FROM faces WHERE cluster_id = ? LIMIT 1', (cluster_id,)).fetchone()
+    remaining = _delete_faces(conn, cluster_id, face_ids)
 
     flash(f"Removed {len(face_ids)} face(s).", "success")
+    if remaining:
+        return redirect(url_for('tag_group', cluster_id=cluster_id))
+    else:
+        flash(f"Cluster #{cluster_id} is now empty and has been removed.", "info")
+        return redirect(url_for('index'))
+
+
+@app.route('/delete_selected_faces', methods=['POST'])
+def delete_selected_faces():
+    """Deletes selected faces entirely from the database and disk."""
+    cluster_id = request.form['cluster_id']
+    face_ids = request.form.getlist('face_ids')
+
+    if not face_ids:
+        flash("You must select at least one face to delete.", "error")
+        return redirect(url_for('tag_group', cluster_id=cluster_id))
+
+    conn = get_db_connection()
+    remaining = _delete_faces(conn, cluster_id, face_ids)
+
+    flash(f"Deleted {len(face_ids)} face(s).", "success")
     if remaining:
         return redirect(url_for('tag_group', cluster_id=cluster_id))
     else:

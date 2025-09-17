@@ -87,6 +87,39 @@ def test_remove_faces_route(tmp_path, monkeypatch):
     assert not (thumb_dir / f"{remove_id}.jpg").exists()
 
 
+def test_delete_selected_faces_route(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 1, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+    ids = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+    delete_id = ids[0]
+    thumb_dir = Path(app_module.config.THUMBNAIL_DIR)
+    thumb_dir.mkdir()
+    (thumb_dir / f"{delete_id}.jpg").write_bytes(b"test")
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/delete_selected_faces",
+            data={"cluster_id": 1, "face_ids": [str(delete_id)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    remaining = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+    assert delete_id not in remaining
+    assert not (thumb_dir / f"{delete_id}.jpg").exists()
+
+
 def test_remove_person_faces_route(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)
