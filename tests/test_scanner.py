@@ -83,12 +83,13 @@ def test_classify_new_faces_assigns_names(tmp_path, monkeypatch):
     scanner_module.classify_new_faces()
 
     row = conn.execute(
-        "SELECT person_name, suggested_person_name, suggested_confidence, suggestion_status FROM faces WHERE file_hash = 'h2'"
+        "SELECT person_name, suggested_person_name, suggested_confidence, suggestion_status, suggested_candidates FROM faces WHERE file_hash = 'h2'"
     ).fetchone()
     assert row[0] is None
     assert row[1] == "Alice"
     assert 0.6 <= row[2] <= 1
     assert row[3] == "pending"
+    assert row[4] is not None
 
 
 def test_hashing_out_of_order_results_map_correctly(tmp_path, monkeypatch):
@@ -136,10 +137,11 @@ def test_classify_new_faces_skips_rejected(tmp_path, monkeypatch):
     scanner_module.classify_new_faces()
 
     row = conn.execute(
-        "SELECT suggested_person_name, suggestion_status FROM faces WHERE file_hash = 'h2'"
+        "SELECT suggested_person_name, suggestion_status, suggested_candidates FROM faces WHERE file_hash = 'h2'"
     ).fetchone()
     assert row[0] == "Alice"
     assert row[1] == "rejected"
+    assert row[2] is not None
 
 
 def test_classify_new_faces_ambiguous_does_not_suggest(tmp_path, monkeypatch):
@@ -168,8 +170,9 @@ def test_classify_new_faces_ambiguous_does_not_suggest(tmp_path, monkeypatch):
     scanner_module.classify_new_faces()
 
     row = conn.execute(
-        "SELECT suggested_person_name, suggested_confidence, suggestion_status FROM faces WHERE file_hash = 'hu'"
+        "SELECT suggested_person_name, suggested_confidence, suggestion_status, suggested_candidates FROM faces WHERE file_hash = 'hu'"
     ).fetchone()
     assert row[0] is None
     assert row[1] is None
     assert row[2] is None
+    assert row[3] is not None

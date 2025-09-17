@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import math
@@ -117,7 +118,7 @@ def tag_group(cluster_id):
     offset = (page - 1) * PAGE_SIZE
 
     sample_faces = conn.execute(
-        "SELECT id, suggested_person_name, suggested_confidence, suggestion_status FROM faces "
+        "SELECT id, suggested_person_name, suggested_confidence, suggestion_status, suggested_candidates FROM faces "
         "WHERE cluster_id = ? LIMIT ? OFFSET ?",
         (cluster_id, PAGE_SIZE, offset),
     ).fetchall()
@@ -141,17 +142,51 @@ def tag_group(cluster_id):
 
     existing_names = [name['person_name'] for name in names]
 
-    suggestions = conn.execute('''
-        SELECT suggested_person_name AS name,
-               AVG(suggested_confidence) AS avg_confidence,
-               COUNT(*) AS face_count
-        FROM faces
-        WHERE cluster_id = ?
-          AND suggested_person_name IS NOT NULL
-          AND (suggestion_status IS NULL OR suggestion_status = 'pending')
-        GROUP BY suggested_person_name
-        ORDER BY avg_confidence DESC, face_count DESC
-    ''', (cluster_id,)).fetchall()
+    suggestion_rows = conn.execute(
+        "SELECT suggested_candidates FROM faces WHERE cluster_id = ? AND suggested_candidates IS NOT NULL",
+        (cluster_id,)
+    ).fetchall()
+
+    candidate_summary = {}
+    for row in suggestion_rows:
+        raw = row[0]
+        if not raw:
+            continue
+        try:
+            candidates = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            candidates = []
+        for candidate in candidates:
+            name = candidate.get('name')
+            confidence = candidate.get('confidence')
+            if not name or confidence is None:
+                continue
+            bucket = candidate_summary.setdefault(name, {
+                'name': name,
+                'total_confidence': 0.0,
+                'count': 0,
+                'max_confidence': 0.0,
+            })
+            bucket['total_confidence'] += confidence
+            bucket['count'] += 1
+            bucket['max_confidence'] = max(bucket['max_confidence'], confidence)
+
+    suggestion_candidates = []
+    for bucket in candidate_summary.values():
+        avg_confidence = bucket['total_confidence'] / bucket['count']
+        suggestion_candidates.append({
+            'name': bucket['name'],
+            'avg_confidence': avg_confidence,
+            'max_confidence': bucket['max_confidence'],
+            'count': bucket['count'],
+        })
+
+    suggestion_candidates.sort(
+        key=lambda item: (item['avg_confidence'], item['max_confidence'], item['count']),
+        reverse=True,
+    )
+    suggestion_candidates = suggestion_candidates[:5]
+    primary_suggestion = suggestion_candidates[0] if suggestion_candidates else None
 
     cluster_data = {
         'id': cluster_id,
@@ -165,7 +200,8 @@ def tag_group(cluster_id):
                            file_names=file_names,
                            file_hashes=file_hashes,
                            files_data=files_data,
-                           suggestions=suggestions)
+                           suggestion_candidates=suggestion_candidates,
+                           primary_suggestion=primary_suggestion)
 
 
 @app.route('/face_thumbnail/<int:face_id>')
@@ -193,7 +229,8 @@ def name_cluster():
                     ELSE 'cleared'
                 END,
                 suggested_person_name = NULL,
-                suggested_confidence = NULL
+                suggested_confidence = NULL,
+                suggested_candidates = NULL
             WHERE cluster_id = ?
         ''', (person_name, cluster_id))
         conn.commit()
@@ -232,7 +269,8 @@ def accept_suggestion():
                 ELSE 'cleared'
             END,
             suggested_person_name = NULL,
-            suggested_confidence = NULL
+            suggested_confidence = NULL,
+            suggested_candidates = NULL
         WHERE cluster_id = ?
     ''', (suggestion_name, cluster_id))
     conn.commit()
@@ -470,7 +508,8 @@ def merge_clusters():
                 ELSE 'cleared'
             END,
             suggested_person_name = NULL,
-            suggested_confidence = NULL
+            suggested_confidence = NULL,
+            suggested_candidates = NULL
         WHERE cluster_id = ?
     ''', (to_person_name, to_cluster_id))
     conn.commit()

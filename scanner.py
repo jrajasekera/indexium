@@ -1,3 +1,4 @@
+import json
 import os
 import pickle
 import signal
@@ -205,6 +206,7 @@ def setup_database():
                 suggested_person_name TEXT DEFAULT NULL,
                 suggested_confidence REAL DEFAULT NULL,
                 suggestion_status TEXT DEFAULT NULL,
+                suggested_candidates TEXT DEFAULT NULL,
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
         ''')
@@ -220,6 +222,9 @@ def setup_database():
         if 'suggestion_status' not in face_columns:
             logger.info("Adding suggestion_status column to faces table...")
             cursor.execute("ALTER TABLE faces ADD COLUMN suggestion_status TEXT DEFAULT NULL")
+        if 'suggested_candidates' not in face_columns:
+            logger.info("Adding suggested_candidates column to faces table...")
+            cursor.execute("ALTER TABLE faces ADD COLUMN suggested_candidates TEXT DEFAULT NULL")
 
         # Check and add new columns to scanned_files table
         cursor.execute("PRAGMA table_info(scanned_files)")
@@ -581,9 +586,11 @@ def classify_new_faces():
 
         updates = []
         clears = []
+        candidate_updates = []
         for face_id, enc_blob, current_suggestion, current_status, current_confidence in rows:
             enc = pickle.loads(enc_blob)
             if not person_models:
+                candidate_updates.append((None, face_id))
                 continue
 
             candidates = []
@@ -595,19 +602,32 @@ def classify_new_faces():
                 candidates.append((name, nearest, centroid_dist, blended_score, model["threshold"]))
 
             if not candidates:
+                candidate_updates.append((None, face_id))
                 continue
 
             candidates.sort(key=lambda item: item[3])
             best_name, best_nearest, _, best_score, best_threshold = candidates[0]
             second_candidate = candidates[1] if len(candidates) > 1 else None
 
-            raw_confidence = max(0.0, min(1.0, 1.0 - (best_nearest / max(best_threshold, 1e-6))))
-            if second_candidate:
-                separation = float(second_candidate[3] - best_score)
-                separation_factor = max(0.0, min(1.0, separation / 0.2))
-            else:
-                separation_factor = 1.0
-            confidence = raw_confidence * separation_factor
+            top_candidates_payload = []
+            for cand_name, cand_nearest, _, cand_score, cand_threshold in candidates[:5]:
+                cand_confidence = max(0.0, min(1.0, 1.0 - (cand_nearest / max(cand_threshold, 1e-6))))
+                if cand_name == best_name and second_candidate:
+                    separation = float(second_candidate[3] - best_score)
+                    separation_factor = max(0.0, min(1.0, separation / 0.2))
+                    cand_confidence *= max(separation_factor, 0.15)
+                top_candidates_payload.append({
+                    "name": cand_name,
+                    "confidence": round(cand_confidence, 4)
+                })
+
+            candidate_json = json.dumps(top_candidates_payload) if top_candidates_payload else None
+            candidate_updates.append((candidate_json, face_id))
+
+            if not top_candidates_payload:
+                continue
+
+            confidence = top_candidates_payload[0]["confidence"]
 
             # Skip updating if the same suggestion was explicitly rejected
             if current_status == 'rejected' and current_suggestion == best_name:
@@ -627,7 +647,7 @@ def classify_new_faces():
                     or current_status not in ('pending', None)
                 )
                 if should_update:
-                    updates.append((best_name, confidence, 'pending', face_id))
+                    updates.append((best_name, confidence, 'pending', candidate_json, face_id))
             else:
                 if current_status != 'rejected' and (
                     current_suggestion is not None
@@ -636,20 +656,33 @@ def classify_new_faces():
                 ):
                     clears.append((face_id,))
 
+        commit_needed = False
+
+        if candidate_updates:
+            cursor.executemany(
+                "UPDATE faces SET suggested_candidates = ? WHERE id = ?",
+                candidate_updates
+            )
+            commit_needed = True
+
         if updates:
             cursor.executemany(
-                "UPDATE faces SET suggested_person_name = ?, suggested_confidence = ?, suggestion_status = ? WHERE id = ?",
+                "UPDATE faces SET suggested_person_name = ?, suggested_confidence = ?, suggestion_status = ?, suggested_candidates = COALESCE(?, suggested_candidates) WHERE id = ?",
                 updates
             )
-            conn.commit()
+            commit_needed = True
             print(f"Added high-confidence suggestions for {len(updates)} faces.")
         if clears:
             cursor.executemany(
                 "UPDATE faces SET suggested_person_name = NULL, suggested_confidence = NULL, suggestion_status = NULL WHERE id = ?",
                 clears
             )
-            conn.commit()
+            commit_needed = True
             print(f"Cleared low-confidence suggestions for {len(clears)} faces.")
+
+        if commit_needed:
+            conn.commit()
+
         if not updates and not clears:
             print("No faces matched existing people within threshold.")
 

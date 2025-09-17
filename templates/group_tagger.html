@@ -18,263 +18,278 @@
         </div>
     </div>
 
-    {% if suggestions %}
-        {% set top = suggestions[0] %}
-        <div class="alert bg-base-100 shadow-lg mb-6">
-            <div>
-                <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20 10 10 0 010-20z" />
-                </svg>
-            </div>
-            <div>
-                <h3 class="font-semibold">Suggested match: {{ top.name }}</h3>
-                <p class="text-sm text-base-content/70">
-                    Confidence {{ (top.avg_confidence or 0) * 100 | round(0) }}% · {{ top.face_count }} face{{ 's' if top.face_count != 1 else '' }} in this group
-                </p>
-                {% if suggestions|length > 1 %}
-                    <p class="text-xs text-base-content/60">Other candidates: {% for s in suggestions[1:] %}{{ s.name }} ({{ (s.avg_confidence or 0) * 100 | round(0) }}%){% if not loop.last %}, {% endif %}{% endfor %}</p>
-                {% endif %}
-            </div>
-            <div class="flex gap-2">
-                <form action="{{ url_for('accept_suggestion') }}" method="post" class="inline-flex">
-                    <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-                    <input type="hidden" name="suggestion_name" value="{{ top.name }}">
-                    <button type="submit" class="btn btn-primary btn-sm">Accept</button>
-                </form>
-                <form action="{{ url_for('reject_suggestion') }}" method="post" class="inline-flex">
-                    <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-                    <input type="hidden" name="suggestion_name" value="{{ top.name }}">
-                    <button type="submit" class="btn btn-ghost btn-sm">Reject</button>
-                </form>
-            </div>
-        </div>
-    {% endif %}
-
-    <!-- Face Selection Form -->
-    <form id="face-selection-form" action="{{ url_for('split_cluster') }}" method="post">
-        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-
-        <!-- Faces Grid -->
-        <div class="card bg-base-100 shadow-lg mb-6">
-            <div class="card-body">
-                <div class="flex flex-wrap justify-center gap-4 p-4 bg-base-200 rounded-lg">
-                    {% for face in cluster.faces %}
-                        <label class="cursor-pointer group" aria-label="Select face {{ loop.index }} for splitting">
-                            <input
-                                type="checkbox"
-                                name="face_ids"
-                                value="{{ face.id }}"
-                                class="face-checkbox sr-only"
-                            >
-                            <div class="face-thumb relative w-24 h-24 rounded-xl overflow-hidden shadow-md transition-all duration-200 group-hover:scale-105">
-                                <img
-                                    src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
-                                    alt="Face from video"
-                                    class="w-full h-full object-cover"
-                                    loading="lazy"
-                                >
-                                {% if face.suggested_person_name and (face.suggestion_status in [None, 'pending']) %}
-                                <div class="absolute inset-x-1 bottom-1">
-                                    <div class="badge badge-primary badge-sm w-full justify-center">
-                                        {{ face.suggested_person_name }} · {{ (face.suggested_confidence or 0) * 100 | round(0) }}%
-                                    </div>
-                                </div>
-                                {% endif %}
-                                <div class="face-thumb-overlay absolute inset-0 bg-primary/25 backdrop-blur-sm rounded-xl opacity-0 transition-opacity flex items-center justify-center">
-                                    <div class="w-7 h-7 bg-primary rounded-full flex items-center justify-center shadow-lg">
-                                        <svg class="w-4 h-4 text-primary-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                        </svg>
-                                    </div>
-                                </div>
-                            </div>
-                        </label>
-                    {% else %}
-                        <div class="text-center py-8">
-                            <svg class="w-16 h-16 mx-auto text-base-content/30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 12h6m-6-4h6m2 5.291A7.962 7.962 0 0112 15c-2.34 0-4.29-.98-5.5-2.5"></path>
-                            </svg>
-                            <p class="text-base-content/70">No faces found for this group. It may have been an error.</p>
-                        </div>
-                    {% endfor %}
+    <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div class="space-y-6">
+            {% if primary_suggestion %}
+            <div class="alert bg-base-100 shadow-lg">
+                <div>
+                    <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20 10 10 0 010-20z" />
+                    </svg>
                 </div>
-
-                <!-- Selection Controls -->
-                {% if cluster.faces %}
-                <div class="mt-6 space-y-4">
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                        <div class="flex items-center gap-3">
-                            <span id="selection-count" class="badge badge-primary badge-outline px-3 py-3 text-sm font-semibold">0 selected</span>
-                            <span class="text-xs text-base-content/70 hidden sm:inline">Tip: click faces to split or remove them.</span>
-                        </div>
-                        <div class="flex gap-2">
-                            <button id="select-all" type="button" class="btn btn-outline btn-sm">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                Select All Faces
-                            </button>
-                            <button id="unselect-all" type="button" class="btn btn-outline btn-sm">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                Unselect All Faces
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="flex flex-wrap justify-center gap-3">
-                        <button
-                            id="split-selected"
-                            type="submit"
-                            formaction="{{ url_for('split_cluster') }}"
-                            class="btn btn-warning btn-sm min-w-[11rem]"
-                            disabled
-                        >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
-                            </svg>
-                            Split Selected
-                        </button>
-                        <button
-                            id="remove-selected"
-                            type="submit"
-                            formaction="{{ url_for('remove_faces') }}"
-                            class="btn btn-error btn-sm min-w-[11rem]"
-                            disabled
-                        >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                            </svg>
-                            Remove Selected
-                        </button>
-                    </div>
+                <div>
+                    <h3 class="font-semibold">Suggested match: {{ primary_suggestion.name }}</h3>
+                    <p class="text-sm text-base-content/70">
+                        Confidence {{ (primary_suggestion.avg_confidence or 0) * 100 | round(0) }}% · {{ primary_suggestion.count }} face{{ 's' if primary_suggestion.count != 1 else '' }} in this group
+                    </p>
                 </div>
-                {% endif %}
-            </div>
-        </div>
-    </form>
-
-    <!-- Pagination -->
-    {% if cluster.total_pages > 1 %}
-    <div class="flex justify-center mb-6">
-        <div class="join">
-            {% if cluster.page > 1 %}
-            <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page - 1) }}" class="join-item btn btn-outline">« Previous</a>
-            {% endif %}
-            <button class="join-item btn btn-active">Page {{ cluster.page }} of {{ cluster.total_pages }}</button>
-            {% if cluster.page < cluster.total_pages %}
-            <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page + 1) }}" class="join-item btn btn-outline">Next »</a>
-            {% endif %}
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- File Names -->
-    {% if file_names %}
-    <div class="card bg-base-100 shadow-lg mb-6">
-        <div class="card-body">
-            <h3 class="card-title text-lg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16l13-8L7 4z"></path>
-                </svg>
-                Source Files
-            </h3>
-            <div class="flex flex-wrap gap-2">
-                {% for fname, fhash in files_data %}
-                <div class="flex items-center gap-2 badge badge-outline">
-                    <span>{{ fname }}</span>
-                    <form action="{{ url_for('remove_video_faces', cluster_id=cluster.id, file_hash=fhash) }}" method="post" class="inline" onsubmit="return confirm('Remove all faces from this video and create a new group?')">
-                        <button type="submit" class="btn btn-ghost btn-xs text-error hover:bg-error hover:text-error-content" title="Remove faces from this video">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                            </svg>
-                        </button>
+                <div class="flex gap-2">
+                    <form action="{{ url_for('accept_suggestion') }}" method="post" class="inline-flex">
+                        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+                        <input type="hidden" name="suggestion_name" value="{{ primary_suggestion.name }}">
+                        <button type="submit" class="btn btn-primary btn-sm">Accept</button>
+                    </form>
+                    <form action="{{ url_for('reject_suggestion') }}" method="post" class="inline-flex">
+                        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+                        <input type="hidden" name="suggestion_name" value="{{ primary_suggestion.name }}">
+                        <button type="submit" class="btn btn-ghost btn-sm">Reject</button>
                     </form>
                 </div>
-                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Face Selection Form -->
+            <form id="face-selection-form" action="{{ url_for('split_cluster') }}" method="post">
+                <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+
+                <div class="card bg-base-100 shadow-lg">
+                    <div class="card-body">
+                        <div class="flex flex-wrap justify-center gap-4 p-4 bg-base-200 rounded-lg">
+                            {% for face in cluster.faces %}
+                                <label class="cursor-pointer group" aria-label="Select face {{ loop.index }} for splitting">
+                                    <input
+                                        type="checkbox"
+                                        name="face_ids"
+                                        value="{{ face.id }}"
+                                        class="face-checkbox sr-only"
+                                    >
+                                    <div class="face-thumb relative w-24 h-24 rounded-xl overflow-hidden shadow-md transition-all duration-200 group-hover:scale-105">
+                                        <img
+                                            src="{{ url_for('get_face_thumbnail', face_id=face.id) }}"
+                                            alt="Face from video"
+                                            class="w-full h-full object-cover"
+                                            loading="lazy"
+                                        >
+                                        {% if face.suggested_person_name and (face.suggestion_status in [None, 'pending']) %}
+                                        <div class="absolute inset-x-1 bottom-1">
+                                            <div class="badge badge-primary badge-sm w-full justify-center">
+                                                {{ face.suggested_person_name }} · {{ (face.suggested_confidence or 0) * 100 | round(0) }}%
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                        <div class="face-thumb-overlay absolute inset-0 bg-primary/25 backdrop-blur-sm rounded-xl opacity-0 transition-opacity flex items-center justify-center">
+                                            <div class="w-7 h-7 bg-primary rounded-full flex items-center justify-center shadow-lg">
+                                                <svg class="w-4 h-4 text-primary-content" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </label>
+                            {% else %}
+                                <div class="text-center py-8">
+                                    <svg class="w-16 h-16 mx-auto text-base-content/30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 12h6m-6-4h6m2 5.291A7.962 7.962 0 0112 15c-2.34 0-4.29-.98-5.5-2.5"></path>
+                                    </svg>
+                                    <p class="text-base-content/70">No faces found for this group. It may have been an error.</p>
+                                </div>
+                            {% endfor %}
+                        </div>
+
+                        {% if cluster.faces %}
+                        <div class="mt-6 space-y-4">
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div class="flex items-center gap-3">
+                                    <span id="selection-count" class="badge badge-primary badge-outline px-3 py-3 text-sm font-semibold">0 selected</span>
+                                    <span class="text-xs text-base-content/70 hidden sm:inline">Tip: click faces to split or remove them.</span>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button id="select-all" type="button" class="btn btn-outline btn-sm">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                        Select All Faces
+                                    </button>
+                                    <button id="unselect-all" type="button" class="btn btn-outline btn-sm">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                        Unselect All Faces
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <button
+                                    id="split-selected"
+                                    type="submit"
+                                    formaction="{{ url_for('split_cluster') }}"
+                                    class="btn btn-warning btn-sm min-w-[11rem]"
+                                    disabled
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                                    </svg>
+                                    Split Selected
+                                </button>
+                                <button
+                                    id="remove-selected"
+                                    type="submit"
+                                    formaction="{{ url_for('remove_faces') }}"
+                                    class="btn btn-error btn-sm min-w-[11rem]"
+                                    disabled
+                                >
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                    Remove Selected
+                                </button>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </form>
+
+            {% if cluster.total_pages > 1 %}
+            <div class="flex justify-center">
+                <div class="join">
+                    {% if cluster.page > 1 %}
+                    <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page - 1) }}" class="join-item btn btn-outline">« Previous</a>
+                    {% endif %}
+                    <button class="join-item btn btn-active">Page {{ cluster.page }} of {{ cluster.total_pages }}</button>
+                    {% if cluster.page < cluster.total_pages %}
+                    <a href="{{ url_for('tag_group', cluster_id=cluster.id, page=cluster.page + 1) }}" class="join-item btn btn-outline">Next »</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if file_names %}
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body">
+                    <h3 class="card-title text-lg">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16l13-8L7 4z"></path>
+                        </svg>
+                        Source Files
+                    </h3>
+                    <div class="flex flex-wrap gap-2">
+                        {% for fname, fhash in files_data %}
+                        <div class="flex items-center gap-2 badge badge-outline">
+                            <span>{{ fname }}</span>
+                            <form action="{{ url_for('remove_video_faces', cluster_id=cluster.id, file_hash=fhash) }}" method="post" class="inline" onsubmit="return confirm('Remove all faces from this video and create a new group?')">
+                                <button type="submit" class="btn btn-ghost btn-xs text-error hover:bg-error hover:text-error-content" title="Remove faces from this video">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                </button>
+                            </form>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body">
+                    <h3 class="card-title text-lg">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+                        </svg>
+                        Name This Group
+                    </h3>
+                    <form action="{{ url_for('name_cluster') }}" method="post">
+                        <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Person Name</span>
+                            </label>
+                            <div class="flex gap-2">
+                                <input list="existing-names" id="person_name" name="person_name" placeholder="{{ 'Suggested: ' + primary_suggestion.name if primary_suggestion else 'Enter or select a name...' }}" class="input input-bordered flex-grow" required autocomplete="off">
+                                <datalist id="existing-names">
+                                    {% for name in existing_names %}
+                                        <option value="{{ name }}">
+                                    {% endfor %}
+                                </datalist>
+                                <button id="save-name" type="submit" class="btn btn-primary">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                    </svg>
+                                    Save
+                                </button>
+                            </div>
+                            <p id="name-error" class="text-error text-sm mt-2 hidden">This name already exists. Use the merge option below to combine groups.</p>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body">
+                    <h3 class="card-title text-lg">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                        </svg>
+                        Merge with Existing Person
+                    </h3>
+                    <form action="{{ url_for('merge_clusters') }}" method="post">
+                        <input type="hidden" name="from_cluster_id" value="{{ cluster.id }}">
+                        <div class="form-control">
+                            <label class="label">
+                                <span class="label-text">Select Person to Merge With</span>
+                            </label>
+                            <div class="flex gap-2">
+                                <input list="merge-names" name="to_person_name" id="merge_target" placeholder="Select person to merge with..." class="input input-bordered flex-grow" autocomplete="off">
+                                <datalist id="merge-names">
+                                    {% for name in existing_names %}
+                                        <option value="{{ name }}">
+                                    {% endfor %}
+                                </datalist>
+                                <button type="submit" class="btn btn-secondary">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                                    </svg>
+                                    Merge
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center">
+                <button id="delete-group-btn" class="btn btn-outline btn-error btn-sm">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    Delete Group
+                </button>
             </div>
         </div>
-    </div>
-    {% endif %}
 
-    <!-- Naming Form -->
-    <div class="card bg-base-100 shadow-lg mb-6">
-        <div class="card-body">
-            <h3 class="card-title text-lg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
-                </svg>
-                Name This Group
-            </h3>
-            <form action="{{ url_for('name_cluster') }}" method="post">
-                <input type="hidden" name="cluster_id" value="{{ cluster.id }}">
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Person Name</span>
-                    </label>
-                    <div class="flex gap-2">
-                        <input list="existing-names" id="person_name" name="person_name" placeholder="{{ 'Suggested: ' + suggestions[0].name if suggestions else 'Enter or select a name...' }}" class="input input-bordered flex-grow" required autocomplete="off">
-                        <datalist id="existing-names">
-                            {% for name in existing_names %}
-                                <option value="{{ name }}">
-                            {% endfor %}
-                        </datalist>
-                        <button id="save-name" type="submit" class="btn btn-primary">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                            </svg>
-                            Save
-                        </button>
-                    </div>
-                    <p id="name-error" class="text-error text-sm mt-2 hidden">This name already exists. Use the merge option below to combine groups.</p>
+        {% if suggestion_candidates %}
+        <aside class="card bg-base-100 shadow-lg h-fit">
+            <div class="card-body">
+                <h3 class="card-title text-lg">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    Top Matches
+                </h3>
+                <p class="text-sm text-base-content/70">Click a name to pre-fill merge target.</p>
+                <div class="space-y-2 mt-4">
+                    {% for candidate in suggestion_candidates %}
+                    <button type="button" class="btn btn-ghost btn-sm justify-between w-full suggestion-choice" data-suggestion-name="{{ candidate.name }}">
+                        <span class="truncate">{{ candidate.name }}</span>
+                        <span class="badge badge-primary badge-outline">{{ (candidate.avg_confidence or 0) * 100 | round(0) }}%</span>
+                    </button>
+                    {% endfor %}
                 </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Merge Form -->
-    <div class="card bg-base-100 shadow-lg mb-6">
-        <div class="card-body">
-            <h3 class="card-title text-lg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
-                </svg>
-                Merge with Existing Person
-            </h3>
-            <form action="{{ url_for('merge_clusters') }}" method="post">
-                <input type="hidden" name="from_cluster_id" value="{{ cluster.id }}">
-                <div class="form-control">
-                    <label class="label">
-                        <span class="label-text">Select Person to Merge With</span>
-                    </label>
-                    <div class="flex gap-2">
-                        <input list="merge-names" name="to_person_name" id="merge_target" placeholder="Select person to merge with..." class="input input-bordered flex-grow" autocomplete="off">
-                        <datalist id="merge-names">
-                            {% for name in existing_names %}
-                                <option value="{{ name }}">
-                            {% endfor %}
-                        </datalist>
-                        <button type="submit" class="btn btn-secondary">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
-                            </svg>
-                            Merge
-                        </button>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Actions -->
-    <div class="flex justify-between items-center">
-        <button id="delete-group-btn" class="btn btn-outline btn-error btn-sm">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-            </svg>
-            Delete Group
-        </button>
+            </div>
+        </aside>
+        {% endif %}
     </div>
 
     <!-- Delete Confirmation Modal -->
@@ -290,8 +305,7 @@
     </div>
 </div>
 <script>
-    const topSuggestion = {{ suggestions[0].name|tojson if suggestions else 'null' }};
-    // Name validation
+    const primarySuggestionName = {{ primary_suggestion.name|tojson if primary_suggestion else 'null' }};
     const existingNames = {{ existing_names|tojson|safe }};
     const nameInput = document.getElementById('person_name');
     const saveBtn = document.getElementById('save-name');
@@ -317,7 +331,6 @@
         }
     }
 
-    // Face selection state handling
     const faceCheckboxes = Array.from(document.querySelectorAll('.face-checkbox'));
     const selectAllBtn = document.getElementById('select-all');
     const unselectAllBtn = document.getElementById('unselect-all');
@@ -357,7 +370,6 @@
         });
     }
 
-    // Delete modal
     const deleteModal = document.getElementById('delete-modal');
     const deleteGroupBtn = document.getElementById('delete-group-btn');
 
@@ -366,7 +378,6 @@
             deleteModal.classList.add('modal-open');
         });
 
-        // Close modal when clicking outside
         deleteModal.addEventListener('click', function(e) {
             if (e.target === deleteModal) {
                 closeDeleteModal();
@@ -393,7 +404,6 @@
         form.submit();
     }
 
-    // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         if (nameInput) {
             checkDuplicate();
@@ -401,9 +411,21 @@
         }
 
         const mergeInput = document.getElementById('merge_target');
-        if (mergeInput && topSuggestion && existingNames.includes(topSuggestion)) {
-            mergeInput.value = topSuggestion;
+        if (mergeInput && primarySuggestionName && existingNames.includes(primarySuggestionName)) {
+            mergeInput.value = primarySuggestionName;
         }
+
+        document.querySelectorAll('.suggestion-choice').forEach((btn) => {
+            btn.addEventListener('click', function() {
+                const choice = btn.dataset.suggestionName;
+                if (mergeInput) {
+                    mergeInput.value = choice;
+                }
+                if (nameInput && !nameInput.value) {
+                    nameInput.placeholder = `Suggested: ${choice}`;
+                }
+            });
+        });
 
         faceCheckboxes.forEach((cb) => {
             cb.addEventListener('change', updateSelectionState);

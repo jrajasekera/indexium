@@ -1,3 +1,4 @@
+import json
 import pickle
 import sqlite3
 from pathlib import Path
@@ -165,8 +166,11 @@ def test_accept_suggestion_route(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_path)
     enc = pickle.dumps(np.array([0]))
     conn.execute(
-        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("h1", 0, "0,0,0,0", enc, 1, "Alice", 0.9, "pending"),
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status, suggested_candidates) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice", 0.9, "pending", json.dumps([
+            {"name": "Alice", "confidence": 0.9},
+            {"name": "Bob", "confidence": 0.4}
+        ])),
     )
     conn.commit()
 
@@ -181,11 +185,12 @@ def test_accept_suggestion_route(tmp_path, monkeypatch):
     conn.close()
     conn = sqlite3.connect(db_path)
     row = conn.execute(
-        "SELECT person_name, suggested_person_name, suggestion_status FROM faces WHERE cluster_id = 1"
+        "SELECT person_name, suggested_person_name, suggestion_status, suggested_candidates FROM faces WHERE cluster_id = 1"
     ).fetchone()
     assert row[0] == "Alice"
     assert row[1] is None
     assert row[2] == "accepted"
+    assert row[3] is None
 
 
 def test_reject_suggestion_route(tmp_path, monkeypatch):
@@ -193,8 +198,11 @@ def test_reject_suggestion_route(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_path)
     enc = pickle.dumps(np.array([0]))
     conn.execute(
-        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("h1", 0, "0,0,0,0", enc, 1, "Bob", 0.7, "pending"),
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status, suggested_candidates) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Bob", 0.7, "pending", json.dumps([
+            {"name": "Bob", "confidence": 0.7},
+            {"name": "Alice", "confidence": 0.5}
+        ])),
     )
     conn.commit()
 
@@ -209,11 +217,12 @@ def test_reject_suggestion_route(tmp_path, monkeypatch):
     conn.close()
     conn = sqlite3.connect(db_path)
     row = conn.execute(
-        "SELECT person_name, suggested_person_name, suggestion_status FROM faces WHERE cluster_id = 1"
+        "SELECT person_name, suggested_person_name, suggestion_status, suggested_candidates FROM faces WHERE cluster_id = 1"
     ).fetchone()
     assert row[0] is None
     assert row[1] == "Bob"
     assert row[2] == "rejected"
+    assert row[3] is not None
 
 
 def test_tag_group_shows_suggestion(tmp_path, monkeypatch):
@@ -221,8 +230,12 @@ def test_tag_group_shows_suggestion(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_path)
     enc = pickle.dumps(np.array([0]))
     conn.execute(
-        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("h1", 0, "0,0,0,0", enc, 1, "Carol", 0.8, "pending"),
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, suggested_person_name, suggested_confidence, suggestion_status, suggested_candidates) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Carol", 0.8, "pending", json.dumps([
+            {"name": "Carol", "confidence": 0.82},
+            {"name": "Alice", "confidence": 0.3},
+            {"name": "Bob", "confidence": 0.28}
+        ])),
     )
     conn.commit()
 
@@ -233,6 +246,7 @@ def test_tag_group_shows_suggestion(tmp_path, monkeypatch):
         assert resp.status_code == 200
         assert b"Suggested match" in resp.data
         assert b"Carol" in resp.data
+        assert b"Top Matches" in resp.data
 
 def test_write_metadata_preserves_file_on_failure(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
