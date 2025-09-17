@@ -349,3 +349,106 @@ def test_write_metadata_preserves_file_on_failure(tmp_path, monkeypatch):
     assert video_path.read_text() == "original"
     temp_path = video_path.parent / f".temp_{video_path.name}"
     assert not temp_path.exists()
+
+
+def test_metadata_preview_lists_pending_updates(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / "video1.mp4"
+    video_path.write_text("original")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}})
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/metadata_preview")
+        assert resp.status_code == 200
+        assert b"Smart Metadata Planner" in resp.data
+        assert str(video_path).encode("utf-8") in resp.data
+        assert b"Alice" in resp.data
+
+
+def test_write_metadata_respects_selection(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video_one = tmp_path / "video1.mp4"
+    video_one.write_text("video1")
+    video_two = tmp_path / "video2.mp4"
+    video_two.write_text("video2")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video_one)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h2", str(video_two)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Bob"),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}})
+
+    class DummyStream:
+        def __init__(self, input_path, output_path, kwargs):
+            self.input_path = input_path
+            self.output_path = output_path
+            self.kwargs = kwargs
+
+    def fake_input(path):
+        return {"input_path": path}
+
+    def fake_output(stream, output_path, **kwargs):
+        return DummyStream(stream["input_path"], output_path, kwargs)
+
+    written_metadata = []
+
+    def fake_run(stream, overwrite_output=True, quiet=True):
+        Path(stream.output_path).write_text("temp")
+        written_metadata.append((stream.input_path, stream.kwargs.get("metadata")))
+
+    def fake_replace(src, dst):
+        src_path = Path(src)
+        dst_path = Path(dst)
+        dst_path.write_text(src_path.read_text())
+        src_path.unlink()
+
+    monkeypatch.setattr(app_module.ffmpeg, "input", fake_input)
+    monkeypatch.setattr(app_module.ffmpeg, "output", fake_output)
+    monkeypatch.setattr(app_module.ffmpeg, "run", fake_run)
+    monkeypatch.setattr(app_module.os, "replace", fake_replace)
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/write_metadata",
+            data={"file_hashes": ["h1"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    assert len(written_metadata) == 1
+    assert written_metadata[0][0] == str(video_one)
+    assert written_metadata[0][1] == "comment=People: Alice"
+    assert video_one.read_text() == "temp"
+    assert video_two.read_text() == "video2"

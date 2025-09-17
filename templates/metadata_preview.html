@@ -1,0 +1,179 @@
+{% extends 'base.html' %}
+{% block title %}Metadata Planner{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h1 class="text-2xl font-bold text-base-content">Smart Metadata Planner</h1>
+            <p class="text-base-content/70">Review the planned metadata changes. Select the files you are ready to update and postpone the rest for later.</p>
+        </div>
+    </div>
+
+    {% if ready_items %}
+    <form method="post" action="{{ url_for('write_metadata') }}" class="space-y-4">
+        <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-base-content">Ready to update</h2>
+            <div class="flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline" onclick="togglePlannerSelection(true)">Select All</button>
+                <button type="button" class="btn btn-sm btn-outline" onclick="togglePlannerSelection(false)">Select None</button>
+            </div>
+        </div>
+        <div class="space-y-4">
+            {% for item in ready_items %}
+            <label class="block">
+                <input type="checkbox" name="file_hashes" value="{{ item.file_hash }}" class="sr-only planner-checkbox" checked>
+                <div class="card bg-base-100 border border-base-300 shadow-sm transition-all hover:border-primary">
+                    <div class="card-body space-y-3">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <p class="text-base font-semibold text-base-content">{{ item.name or 'Unnamed file' }}</p>
+                                {% if item.path %}
+                                <p class="text-xs text-base-content/70 break-all">{{ item.path }}</p>
+                                {% else %}
+                                <p class="text-xs text-error/70">No path recorded in the database.</p>
+                                {% endif %}
+                            </div>
+                            <div class="flex flex-col items-end gap-2">
+                                <span class="badge badge-outline badge-sm">{{ item.file_hash }}</span>
+                                <span class="badge badge-primary badge-outline planner-state">Selected</span>
+                            </div>
+                        </div>
+
+                        <div class="grid gap-3 md:grid-cols-2">
+                            <div class="space-y-2">
+                                <p class="text-xs font-semibold uppercase text-base-content/60">Tags in database</p>
+                                <p class="text-sm text-base-content">{{ item.db_people | join(', ') }}</p>
+                                {% if item.tags_to_add %}
+                                <p class="text-xs text-primary">New tags to add: {{ item.tags_to_add | join(', ') }}</p>
+                                {% else %}
+                                <p class="text-xs text-base-content/60">No new names; metadata will be normalised.</p>
+                                {% endif %}
+                                {% if item.metadata_only_people %}
+                                <p class="text-xs text-base-content/70">Existing metadata also lists: {{ item.metadata_only_people | join(', ') }}</p>
+                                {% endif %}
+                            </div>
+                            <div class="space-y-2">
+                                <p class="text-xs font-semibold uppercase text-base-content/60">Existing comment</p>
+                                {% if item.existing_comment %}
+                                <p class="text-sm text-base-content/80 break-words">{{ item.existing_comment }}</p>
+                                {% else %}
+                                <p class="text-sm text-base-content/60">No current comment.</p>
+                                {% endif %}
+                                <p class="text-xs font-semibold uppercase text-base-content/60 mt-2">Planned comment</p>
+                                <p class="text-sm text-base-content/80 break-words">{{ item.result_comment }}</p>
+                                {% if item.overwrites_custom_comment %}
+                                <div class="alert alert-warning mt-2 py-2 px-3 text-sm">
+                                    <span>Existing non-"People" comment will be replaced.</span>
+                                </div>
+                                {% elif item.will_overwrite_comment %}
+                                <div class="alert alert-warning mt-2 py-2 px-3 text-sm">
+                                    <span>Comment will be updated.</span>
+                                </div>
+                                {% endif %}
+                                {% if item.probe_error %}
+                                <div class="alert alert-error mt-2 py-2 px-3 text-xs">
+                                    <span>ffprobe warning: {{ item.probe_error }}</span>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+                <span id="planner-selection-count" class="badge badge-primary badge-outline">{{ ready_items | length }} selected</span>
+            </div>
+            <div class="flex gap-2">
+                <a href="{{ url_for('index') }}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Write Selected Metadata</button>
+            </div>
+        </div>
+    </form>
+    {% endif %}
+
+    {% if not ready_items and not blocked_items %}
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <p class="text-base-content">No metadata updates are pending right now.</p>
+            <div class="mt-4">
+                <a href="{{ url_for('index') }}" class="btn btn-primary">Back to dashboard</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if blocked_items %}
+    <div class="card bg-base-100 shadow-lg border border-warning">
+        <div class="card-body space-y-3">
+            <div class="flex items-center gap-2">
+                <svg class="w-5 h-5 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 5c-.77-1.333-2.694-1.333-3.464 0L4.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <h2 class="text-lg font-semibold text-warning">Blocked items</h2>
+            </div>
+            <p class="text-sm text-base-content/70">These files need attention before metadata can be written.</p>
+            <div class="space-y-4">
+                {% for item in blocked_items %}
+                <div class="card bg-base-200 border border-base-300">
+                    <div class="card-body space-y-2">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <p class="text-sm font-semibold text-base-content">{{ item.name or 'Unnamed file' }}</p>
+                                {% if item.path %}
+                                <p class="text-xs text-base-content/70 break-all">{{ item.path }}</p>
+                                {% else %}
+                                <p class="text-xs text-error/80">No path recorded in the database.</p>
+                                {% endif %}
+                            </div>
+                            <span class="badge badge-outline badge-sm">{{ item.file_hash }}</span>
+                        </div>
+                        <p class="text-xs text-base-content/70">Tags awaiting write: {{ item.result_people | join(', ') }}</p>
+                        <p class="text-xs text-error">File is unavailable; reconnect or rescan before retrying.</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    const plannerCheckboxes = Array.from(document.querySelectorAll('.planner-checkbox'));
+    const plannerBadges = Array.from(document.querySelectorAll('.planner-state'));
+    const selectionBadge = document.getElementById('planner-selection-count');
+
+    function updatePlannerSelectionState() {
+        plannerCheckboxes.forEach((checkbox, index) => {
+            if (!plannerBadges[index]) {
+                return;
+            }
+            plannerBadges[index].textContent = checkbox.checked ? 'Selected' : 'Postponed';
+            plannerBadges[index].classList.toggle('badge-primary', checkbox.checked);
+            plannerBadges[index].classList.toggle('badge-ghost', !checkbox.checked);
+        });
+        if (selectionBadge) {
+            const selectedCount = plannerCheckboxes.filter((checkbox) => checkbox.checked).length;
+            selectionBadge.textContent = `${selectedCount} selected`;
+        }
+    }
+
+    function togglePlannerSelection(selectAll) {
+        plannerCheckboxes.forEach((checkbox) => {
+            checkbox.checked = !!selectAll;
+        });
+        updatePlannerSelectionState();
+    }
+
+    plannerCheckboxes.forEach((checkbox) => {
+        checkbox.addEventListener('change', updatePlannerSelectionState);
+    });
+
+    updatePlannerSelectionState();
+
+    window.togglePlannerSelection = togglePlannerSelection;
+</script>
+{% endblock %}

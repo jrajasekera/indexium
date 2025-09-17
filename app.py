@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import math
 
@@ -40,6 +41,100 @@ def close_db_connection(exception):
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+def extract_people_from_comment(comment):
+    """Extracts a set of person names from a metadata comment field."""
+    if not comment:
+        return set()
+
+    match = re.search(r"People:\s*(.*)", comment)
+    if not match:
+        return set()
+
+    people_segment = match.group(1)
+    for terminator in ('\n', ';', '|'):
+        if terminator in people_segment:
+            people_segment = people_segment.split(terminator, 1)[0]
+    names = [name.strip() for name in people_segment.split(',') if name.strip()]
+    return set(names)
+
+
+def build_metadata_plan(conn, target_hashes=None):
+    """Builds a per-file plan summarizing pending metadata writes."""
+    params = []
+    query = 'SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL'
+    if target_hashes:
+        placeholders = ','.join('?' for _ in target_hashes)
+        query += f' AND file_hash IN ({placeholders})'
+        params.extend(target_hashes)
+
+    videos = conn.execute(query, params).fetchall()
+
+    plan = []
+    for video in videos:
+        file_hash = video['file_hash']
+        db_names_rows = conn.execute(
+            'SELECT DISTINCT person_name FROM faces WHERE file_hash = ? AND person_name IS NOT NULL',
+            (file_hash,)
+        ).fetchall()
+        db_people = sorted({row['person_name'] for row in db_names_rows})
+
+        path_row = conn.execute(
+            'SELECT last_known_filepath FROM scanned_files WHERE file_hash = ?',
+            (file_hash,)
+        ).fetchone()
+        raw_path = path_row['last_known_filepath'] if path_row else None
+        can_update = bool(raw_path and os.path.exists(raw_path))
+
+        existing_comment = None
+        existing_people = set()
+        probe_error = None
+
+        if can_update:
+            try:
+                probe = ffmpeg.probe(raw_path)
+                existing_comment = probe.get('format', {}).get('tags', {}).get('comment')
+            except ffmpeg.Error as exc:
+                probe_error = exc.stderr.decode('utf8') if getattr(exc, 'stderr', None) else str(exc)
+                existing_comment = ''
+
+        existing_comment_value = (existing_comment or '').strip()
+        if existing_comment_value:
+            existing_people = extract_people_from_comment(existing_comment_value)
+
+        result_people = sorted(set(db_people).union(existing_people))
+        if not result_people:
+            continue
+
+        result_comment = f"People: {', '.join(result_people)}"
+        tags_to_add = sorted(set(db_people) - existing_people)
+        metadata_only_people = sorted(existing_people - set(db_people))
+
+        requires_update = existing_comment_value != result_comment or not can_update
+        will_overwrite_comment = bool(existing_comment_value and existing_comment_value != result_comment)
+        overwrites_custom_comment = bool(existing_comment_value and not existing_comment_value.startswith('People:'))
+
+        plan.append({
+            'file_hash': file_hash,
+            'path': raw_path,
+            'name': os.path.basename(raw_path) if raw_path else None,
+            'db_people': db_people,
+            'existing_people': sorted(existing_people),
+            'metadata_only_people': metadata_only_people,
+            'result_people': result_people,
+            'tags_to_add': tags_to_add,
+            'existing_comment': existing_comment if existing_comment is not None else None,
+            'result_comment': result_comment,
+            'requires_update': requires_update,
+            'can_update': can_update,
+            'will_overwrite_comment': will_overwrite_comment if existing_comment is not None else None,
+            'overwrites_custom_comment': overwrites_custom_comment if existing_comment is not None else None,
+            'probe_error': probe_error,
+        })
+
+    plan.sort(key=lambda item: ((item['name'] or '').lower(), item['file_hash']))
+    return plan
 
 
 def get_progress_stats():
@@ -369,50 +464,54 @@ def skip_cluster(cluster_id):
     return redirect(url_for('index'))
 
 
+@app.route('/metadata_preview')
+def metadata_preview():
+    """Displays a planner view of pending metadata writes for review."""
+    conn = get_db_connection()
+    plan = [item for item in build_metadata_plan(conn) if item['requires_update']]
+    ready_items = [item for item in plan if item['can_update']]
+    blocked_items = [item for item in plan if not item['can_update']]
+    return render_template(
+        'metadata_preview.html',
+        ready_items=ready_items,
+        blocked_items=blocked_items,
+    )
+
+
 @app.route('/write_metadata', methods=['POST'])
 def write_metadata():
-    """
-    Intelligently reads, merges, and writes face tags into the file's
-    metadata 'comment' tag using ffmpeg.
-    """
+    """Executes metadata writes for the selected planner items."""
+    selected_hashes = request.form.getlist('file_hashes')
     print("Starting intelligent metadata write process...")
+
     conn = get_db_connection()
-    videos_to_tag = conn.execute('SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL').fetchall()
+    plan = build_metadata_plan(conn, selected_hashes if selected_hashes else None)
+    plan = [item for item in plan if item['requires_update']]
+
+    if selected_hashes and not plan:
+        flash("No metadata updates were selected for writing.", "info")
+        return redirect(url_for('metadata_preview'))
+
+    ready_items = [item for item in plan if item['can_update']]
+    blocked_items = [item for item in plan if not item['can_update']]
+
+    if not ready_items:
+        if blocked_items:
+            flash(
+                f"No metadata updates were written. {len(blocked_items)} file(s) were unavailable.",
+                "warning",
+            )
+        else:
+            flash("No metadata updates were required.", "info")
+        return redirect(url_for('metadata_preview'))
 
     tagged_count = 0
-    for video in videos_to_tag:
-        file_hash = video['file_hash']
-        path_info = conn.execute('SELECT last_known_filepath FROM scanned_files WHERE file_hash = ?',
-                                 (file_hash,)).fetchone()
-        if not path_info or not os.path.exists(path_info['last_known_filepath']):
-            print(f"  - WARNING: Path for hash {file_hash} not found. Skipping.")
-            continue
+    failures = []
 
-        video_path = path_info['last_known_filepath']
-
-        # Get names from DB
-        db_names_rows = conn.execute(
-            'SELECT DISTINCT person_name FROM faces WHERE file_hash = ? AND person_name IS NOT NULL',
-            (file_hash,)).fetchall()
-        db_names = {row['person_name'] for row in db_names_rows}
-
-        # Get existing names from file metadata
-        try:
-            probe = ffmpeg.probe(video_path)
-            comment_tag = probe.get('format', {}).get('tags', {}).get('comment', '')
-            if 'People: ' in comment_tag:
-                existing_names_str = comment_tag.split('People: ')[1]
-                existing_names = {name.strip() for name in existing_names_str.split(',')}
-            else:
-                existing_names = set()
-        except ffmpeg.Error as e:
-            print(f"  - FFPROBE ERROR for {video_path}: {e.stderr.decode('utf8')}. Assuming no existing tags.")
-            existing_names = set()
-
-        # Merge names and create new tag string
-        all_names = sorted(list(db_names.union(existing_names)))
-        tags_string = ", ".join(all_names)
-
+    for item in ready_items:
+        video_path = item['path']
+        output_path = None
+        tags_string = ", ".join(item['result_people'])
         print(f"Processing {video_path} -> Tags: {tags_string}")
 
         try:
@@ -420,24 +519,38 @@ def write_metadata():
             output_path = os.path.join(os.path.dirname(input_path), f".temp_{os.path.basename(input_path)}")
 
             stream = ffmpeg.input(input_path)
-            stream = ffmpeg.output(stream, output_path, c='copy', metadata=f'comment=People: {tags_string}')
+            stream = ffmpeg.output(stream, output_path, c='copy', metadata=f"comment={item['result_comment']}")
             ffmpeg.run(stream, overwrite_output=True, quiet=True)
 
             try:
                 os.replace(output_path, input_path)
             except Exception:
-                if os.path.exists(output_path):
+                if output_path and os.path.exists(output_path):
                     os.remove(output_path)
                 raise
-            print(f"  - Successfully tagged and replaced file.")
+            print("  - Successfully tagged and replaced file.")
             tagged_count += 1
-        except Exception as e:
-            print(f"  - FFMPEG WRITE ERROR for file {video_path}: {e}")
-            if os.path.exists(output_path):
+        except Exception as exc:
+            print(f"  - FFMPEG WRITE ERROR for file {video_path}: {exc}")
+            if output_path and os.path.exists(output_path):
                 os.remove(output_path)
+            failures.append(item['name'] or item['file_hash'])
 
-    flash(f"Metadata writing complete. Updated {tagged_count} files.", "success")
-    return redirect(url_for('index'))
+    if failures:
+        flash(
+            f"Metadata writing complete. Updated {tagged_count} file(s). Failed: {', '.join(failures)}.",
+            "warning",
+        )
+    else:
+        flash(f"Metadata writing complete. Updated {tagged_count} file(s).", "success")
+
+    if blocked_items:
+        flash(
+            f"Skipped {len(blocked_items)} file(s) because their paths were unavailable.",
+            "warning",
+        )
+
+    return redirect(url_for('metadata_preview'))
 
 
 # --- NEW ROUTES FOR REVIEWING/EDITING ---

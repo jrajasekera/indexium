@@ -229,11 +229,11 @@
     <!-- Metadata Write Modal -->
     <div id="metadata-modal" class="modal">
         <div class="modal-box">
-            <h3 class="font-bold text-lg">Write Metadata to Videos</h3>
-            <p class="py-4">This will embed person tags into your video files' metadata. This process creates new files and replaces the originals. Make sure you have backups!</p>
+            <h3 class="font-bold text-lg">Smart Metadata Planner</h3>
+            <p class="py-4">Review pending metadata changes, confirm which files to update, or postpone individual items before writing tags to your videos.</p>
             <div class="modal-action">
                 <button class="btn" onclick="closeMetadataModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="confirmMetadataWrite()">Confirm</button>
+                <button class="btn btn-primary" onclick="confirmMetadataWrite()">Review Changes</button>
             </div>
         </div>
     </div>
@@ -312,11 +312,7 @@
         }
 
         function confirmMetadataWrite() {
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '/write_metadata';
-            document.body.appendChild(form);
-            form.submit();
+            window.location.href = '/metadata_preview';
         }
 
         metadataTriggers.forEach((trigger) => {
