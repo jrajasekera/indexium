@@ -87,7 +87,7 @@ def test_classify_new_faces_assigns_names(tmp_path, monkeypatch):
     ).fetchone()
     assert row[0] is None
     assert row[1] == "Alice"
-    assert 0 < row[2] <= 1
+    assert 0.6 <= row[2] <= 1
     assert row[3] == "pending"
 
 
@@ -140,3 +140,36 @@ def test_classify_new_faces_skips_rejected(tmp_path, monkeypatch):
     ).fetchone()
     assert row[0] == "Alice"
     assert row[1] == "rejected"
+
+
+def test_classify_new_faces_ambiguous_does_not_suggest(tmp_path, monkeypatch):
+    db_path = setup_temp_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+
+    alice = np.array([0.0, 0.0])
+    bob = np.array([0.03, 0.0])
+    unknown = np.array([0.018, 0.0])
+
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name) VALUES (?, ?, ?, ?, ?)",
+        ("ha", 0, "0,0,0,0", pickle.dumps(alice), "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name) VALUES (?, ?, ?, ?, ?)",
+        ("hb", 0, "0,0,0,0", pickle.dumps(bob), "Bob"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)",
+        ("hu", 0, "0,0,0,0", pickle.dumps(unknown)),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(scanner_module.config, "AUTO_CLASSIFY_THRESHOLD", 0.3)
+    scanner_module.classify_new_faces()
+
+    row = conn.execute(
+        "SELECT suggested_person_name, suggested_confidence, suggestion_status FROM faces WHERE file_hash = 'hu'"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] is None
+    assert row[2] is None

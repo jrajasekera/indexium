@@ -214,7 +214,7 @@
                         <span class="label-text">Person Name</span>
                     </label>
                     <div class="flex gap-2">
-                        <input list="existing-names" id="person_name" name="person_name" placeholder="Enter or select a name..." class="input input-bordered flex-grow" required autocomplete="off">
+                        <input list="existing-names" id="person_name" name="person_name" placeholder="{{ 'Suggested: ' + suggestions[0].name if suggestions else 'Enter or select a name...' }}" class="input input-bordered flex-grow" required autocomplete="off">
                         <datalist id="existing-names">
                             {% for name in existing_names %}
                                 <option value="{{ name }}">
@@ -290,6 +290,7 @@
     </div>
 </div>
 <script>
+    const topSuggestion = {{ suggestions[0].name|tojson if suggestions else 'null' }};
     // Name validation
     const existingNames = {{ existing_names|tojson|safe }};
     const nameInput = document.getElementById('person_name');
@@ -397,6 +398,11 @@
         if (nameInput) {
             checkDuplicate();
             nameInput.addEventListener('input', checkDuplicate);
+        }
+
+        const mergeInput = document.getElementById('merge_target');
+        if (mergeInput && topSuggestion && existingNames.includes(topSuggestion)) {
+            mergeInput.value = topSuggestion;
         }
 
         faceCheckboxes.forEach((cb) => {

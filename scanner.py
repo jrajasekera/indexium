@@ -549,7 +549,25 @@ def classify_new_faces():
             enc = pickle.loads(enc_blob)
             name_to_encs.setdefault(name, []).append(enc)
 
-        centroids = {name: np.mean(encs, axis=0) for name, encs in name_to_encs.items()}
+        base_threshold = config.AUTO_CLASSIFY_THRESHOLD
+        person_models = {}
+        for name, encs in name_to_encs.items():
+            enc_array = np.stack(encs)
+            centroid = np.mean(enc_array, axis=0)
+            if len(encs) > 1:
+                centroid_dists = np.linalg.norm(enc_array - centroid, axis=1)
+                mean_dist = float(np.mean(centroid_dists))
+                std_dist = float(np.std(centroid_dists))
+                adaptive = max(mean_dist + std_dist * 0.75, base_threshold * 0.5)
+            else:
+                adaptive = base_threshold * 0.6
+            adaptive = min(adaptive, base_threshold)
+            adaptive = max(adaptive, base_threshold * 0.4)
+            person_models[name] = {
+                "encodings": enc_array,
+                "centroid": centroid,
+                "threshold": adaptive,
+            }
 
         # Fetch faces without a name
         rows = cursor.execute(
@@ -561,32 +579,61 @@ def classify_new_faces():
             print("No unnamed faces to classify.")
             return
 
-        threshold = config.AUTO_CLASSIFY_THRESHOLD
         updates = []
         clears = []
         for face_id, enc_blob, current_suggestion, current_status, current_confidence in rows:
             enc = pickle.loads(enc_blob)
-            best_name = None
-            best_dist = None
-            for name, centroid in centroids.items():
-                dist = np.linalg.norm(enc - centroid)
-                if best_dist is None or dist < best_dist:
-                    best_dist = dist
-                    best_name = name
-            if best_dist is not None and best_dist <= threshold:
-                confidence = max(0.0, 1.0 - (best_dist / threshold))
-                # Skip updating if the same suggestion was explicitly rejected
-                if current_status == 'rejected' and current_suggestion == best_name:
-                    continue
-                if (
+            if not person_models:
+                continue
+
+            candidates = []
+            for name, model in person_models.items():
+                distances = np.linalg.norm(model["encodings"] - enc, axis=1)
+                nearest = float(np.min(distances))
+                centroid_dist = float(np.linalg.norm(enc - model["centroid"]))
+                blended_score = (0.65 * nearest) + (0.35 * centroid_dist)
+                candidates.append((name, nearest, centroid_dist, blended_score, model["threshold"]))
+
+            if not candidates:
+                continue
+
+            candidates.sort(key=lambda item: item[3])
+            best_name, best_nearest, _, best_score, best_threshold = candidates[0]
+            second_candidate = candidates[1] if len(candidates) > 1 else None
+
+            raw_confidence = max(0.0, min(1.0, 1.0 - (best_nearest / max(best_threshold, 1e-6))))
+            if second_candidate:
+                separation = float(second_candidate[3] - best_score)
+                separation_factor = max(0.0, min(1.0, separation / 0.2))
+            else:
+                separation_factor = 1.0
+            confidence = raw_confidence * separation_factor
+
+            # Skip updating if the same suggestion was explicitly rejected
+            if current_status == 'rejected' and current_suggestion == best_name:
+                continue
+
+            accept_suggestion = (
+                best_nearest <= base_threshold
+                and best_nearest <= best_threshold
+                and confidence >= 0.6
+            )
+
+            if accept_suggestion:
+                should_update = (
                     current_suggestion != best_name
                     or current_confidence is None
                     or confidence > (current_confidence or 0)
                     or current_status not in ('pending', None)
-                ):
+                )
+                if should_update:
                     updates.append((best_name, confidence, 'pending', face_id))
             else:
-                if current_suggestion is not None or current_confidence is not None or current_status is not None:
+                if current_status != 'rejected' and (
+                    current_suggestion is not None
+                    or current_confidence is not None
+                    or current_status is not None
+                ):
                     clears.append((face_id,))
 
         if updates:
@@ -595,15 +642,15 @@ def classify_new_faces():
                 updates
             )
             conn.commit()
-            print(f"Added suggestions for {len(updates)} faces.")
+            print(f"Added high-confidence suggestions for {len(updates)} faces.")
         if clears:
             cursor.executemany(
                 "UPDATE faces SET suggested_person_name = NULL, suggested_confidence = NULL, suggestion_status = NULL WHERE id = ?",
                 clears
             )
             conn.commit()
-            print(f"Cleared suggestions for {len(clears)} faces.")
-        else:
+            print(f"Cleared low-confidence suggestions for {len(clears)} faces.")
+        if not updates and not clears:
             print("No faces matched existing people within threshold.")
 
 
