@@ -3,9 +3,6 @@
 ## Continuous Library Watcher
 Set up a background watcher that notices when new or changed video files arrive in the configured directories, automatically schedules them for hashing, and surfaces their status in the UI so users never have to remember to rerun the scanner manually.
 
-## Guided Auto-Labeling With Confidence Feedback
-Introduce an active-learning workflow where the system records similarity scores for suggested names, shows the confidence to the reviewer, and asks for quick thumbs-up/thumbs-down feedback to continuously improve future automatic assignments.
-
 ## Tagging Progress & Quality Dashboard
 Create a dashboard that highlights how many clusters remain unnamed, which people have the highest number of unreviewed faces, and trends over time so users can focus their effort where it matters most.
 

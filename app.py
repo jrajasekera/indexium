@@ -469,7 +469,22 @@ def person_details(person_name):
     if not faces:
         flash(f"Person '{person_name}' not found.", "error")
         return redirect(url_for('list_people'))
-    return render_template('person_detail.html', person_name=person_name, faces=faces)
+    file_rows = conn.execute('''
+        SELECT DISTINCT sf.file_hash, sf.last_known_filepath
+        FROM faces f
+        LEFT JOIN scanned_files sf ON f.file_hash = sf.file_hash
+        WHERE f.person_name = ?
+        ORDER BY LOWER(COALESCE(sf.last_known_filepath, ''))
+    ''', (person_name,)).fetchall()
+    files = [
+        {
+            "file_hash": row["file_hash"],
+            "path": row["last_known_filepath"],
+            "name": os.path.basename(row["last_known_filepath"]) if row["last_known_filepath"] else None,
+        }
+        for row in file_rows
+    ]
+    return render_template('person_detail.html', person_name=person_name, faces=faces, files=files)
 
 
 @app.route('/rename_person/<old_name>', methods=['POST'])
