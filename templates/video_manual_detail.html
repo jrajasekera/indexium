@@ -27,15 +27,22 @@
                     <div class="flex items-center justify-between">
                         <h2 class="card-title">Sample Frames</h2>
                         <form action="{{ url_for('manual_video_reshuffle', file_hash=video.file_hash) }}" method="post">
+                            {% if focus_person %}
+                            <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                            {% endif %}
                             <button type="submit" class="btn btn-sm btn-outline">Reshuffle</button>
                         </form>
                     </div>
                     {% if sample_images %}
-                    <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                    <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4" id="manual-sample-grid">
                         {% for image in sample_images %}
-                        <div class="overflow-hidden rounded-xl border border-base-300">
+                        <button type="button"
+                                class="overflow-hidden rounded-xl border border-base-300 focus:outline-none focus:ring-2 focus:ring-primary"
+                                data-frame-index="{{ loop.index0 }}"
+                                data-frame-url="{{ image.url }}"
+                                data-frame-label="Sample frame {{ loop.index }}">
                             <img src="{{ image.url }}" alt="Sample frame {{ loop.index }}" class="object-cover w-full h-full" loading="lazy">
-                        </div>
+                        </button>
                         {% endfor %}
                     </div>
                     {% elif video.missing %}
@@ -55,8 +62,21 @@
             <div class="card bg-base-100 shadow-lg">
                 <div class="card-body space-y-4">
                     <h2 class="card-title">Tagged People</h2>
+                    {% if focus_person %}
+                    <div class="alert bg-primary/10 border border-primary/30 text-primary-content">
+                        <div>
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20 10 10 0 010-20z"></path>
+                            </svg>
+                        </div>
+                        <span>Add <strong>{{ focus_person }}</strong> with the quick search below.</span>
+                    </div>
+                    {% endif %}
                     {% if tags %}
                     <form action="{{ url_for('manual_video_remove_tags', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        {% if focus_person %}
+                        <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                        {% endif %}
                         <div class="space-y-2">
                             {% for tag in tags %}
                             <label class="flex items-center justify-between gap-3 p-2 bg-base-200 rounded-lg">
@@ -71,19 +91,35 @@
                     <p class="text-sm text-base-content/70">No tags yet. Add anyone who appears in this video.</p>
                     {% endif %}
                     <div class="divider">Add Tags</div>
+                    <form action="{{ url_for('manual_video_add_tags', file_hash=video.file_hash) }}" method="post" class="space-y-2">
+                        {% if focus_person %}
+                        <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                        {% endif %}
+                        <label class="label"><span class="label-text">Search existing people</span></label>
+                        <div class="join w-full">
+                            <input
+                                type="text"
+                                name="existing_person"
+                                list="detail-known-people"
+                                value="{{ focus_person }}"
+                                class="input input-bordered join-item w-full"
+                                placeholder="Start typing a name"
+                            >
+                            <button type="submit" class="btn btn-primary join-item">Add</button>
+                        </div>
+                        <datalist id="detail-known-people">
+                            {% for name in known_people %}
+                            <option value="{{ name }}"></option>
+                            {% endfor %}
+                        </datalist>
+                        <p class="text-xs text-base-content/60">Press enter to add the highlighted person instantly.</p>
+                    </form>
                     <form action="{{ url_for('manual_video_add_tags', file_hash=video.file_hash) }}" method="post" class="space-y-3">
-                        <div>
-                            <label class="label"><span class="label-text">Choose existing people</span></label>
-                            <select name="selected_person" class="select select-bordered w-full" size="6" multiple>
-                                {% for name in known_people %}
-                                <option value="{{ name }}">{{ name }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div>
-                            <label class="label"><span class="label-text">Or add new names (comma or newline separated)</span></label>
-                            <textarea name="person_name" class="textarea textarea-bordered w-full" rows="2"></textarea>
-                        </div>
+                        {% if focus_person %}
+                        <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                        {% endif %}
+                        <label class="label"><span class="label-text">Add new names (comma or newline separated)</span></label>
+                        <textarea name="person_name" class="textarea textarea-bordered w-full" rows="2"></textarea>
                         <button type="submit" class="btn btn-primary btn-block">Add Tags</button>
                     </form>
                 </div>
@@ -93,10 +129,16 @@
                 <div class="card-body space-y-3">
                     <h2 class="card-title">Review Actions</h2>
                     <form action="{{ url_for('manual_video_update_status', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        {% if focus_person %}
+                        <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                        {% endif %}
                         <input type="hidden" name="status" value="done" />
                         <button type="submit" class="btn btn-success btn-block" {% if not tags %}disabled{% endif %}>Mark as Done</button>
                     </form>
                     <form action="{{ url_for('manual_video_update_status', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        {% if focus_person %}
+                        <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                        {% endif %}
                         <input type="hidden" name="status" value="no_people" />
                         <button type="submit" class="btn btn-secondary btn-block">Mark Reviewed — No People</button>
                     </form>
@@ -105,4 +147,112 @@
         </div>
     </div>
 </div>
+
+<div id="frame-lightbox" class="fixed inset-0 z-50 hidden bg-base-300/80 backdrop-blur-sm">
+    <div class="flex h-full w-full items-center justify-center p-4">
+        <div id="frame-lightbox-content" class="relative max-h-full w-full max-w-5xl rounded-3xl bg-base-100 shadow-2xl border border-base-300">
+            <button type="button" id="frame-lightbox-close" class="btn btn-sm btn-circle btn-ghost bg-base-200/80 hover:bg-base-200 border border-base-300 shadow absolute -right-3 -top-3" aria-label="Close preview">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+            <div class="p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <button type="button" id="frame-lightbox-prev" class="btn btn-outline" aria-label="Previous frame">← Previous</button>
+                    <span id="frame-lightbox-caption" class="text-sm text-base-content/70"></span>
+                    <button type="button" id="frame-lightbox-next" class="btn btn-outline" aria-label="Next frame">Next →</button>
+                </div>
+                <div class="flex justify-center">
+                    <img id="frame-lightbox-image" src="" alt="Selected video frame" class="max-h-[70vh] w-auto rounded-xl border border-base-300 shadow-lg">
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+    const grid = document.getElementById('manual-sample-grid');
+    if (!grid) {
+        return;
+    }
+
+    const lightbox = document.getElementById('frame-lightbox');
+    const lightboxImage = document.getElementById('frame-lightbox-image');
+    const lightboxCaption = document.getElementById('frame-lightbox-caption');
+    const closeBtn = document.getElementById('frame-lightbox-close');
+    const nextBtn = document.getElementById('frame-lightbox-next');
+    const prevBtn = document.getElementById('frame-lightbox-prev');
+    const lightboxCard = document.getElementById('frame-lightbox-content');
+
+    const frameButtons = Array.from(grid.querySelectorAll('button[data-frame-index]'));
+    if (!frameButtons.length) {
+        return;
+    }
+
+    let currentIndex = 0;
+
+    const updateLightbox = (index) => {
+        const button = frameButtons[index];
+        if (!button) {
+            return;
+        }
+        currentIndex = index;
+        const url = button.getAttribute('data-frame-url');
+        const label = button.getAttribute('data-frame-label');
+        lightboxImage.src = url;
+        lightboxImage.alt = label;
+        lightboxCaption.textContent = label;
+    };
+
+    const openLightbox = (index) => {
+        updateLightbox(index);
+        lightbox.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden');
+    };
+
+    const closeLightbox = () => {
+        lightbox.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+        lightboxImage.src = '';
+    };
+
+    const showNext = () => {
+        const nextIndex = (currentIndex + 1) % frameButtons.length;
+        updateLightbox(nextIndex);
+    };
+
+    const showPrev = () => {
+        const prevIndex = (currentIndex - 1 + frameButtons.length) % frameButtons.length;
+        updateLightbox(prevIndex);
+    };
+
+    frameButtons.forEach((button, index) => {
+        button.addEventListener('click', () => openLightbox(index));
+    });
+
+    closeBtn.addEventListener('click', closeLightbox);
+    nextBtn.addEventListener('click', showNext);
+    prevBtn.addEventListener('click', showPrev);
+
+    lightbox.addEventListener('click', (event) => {
+        if (!lightboxCard.contains(event.target)) {
+            closeLightbox();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (lightbox.classList.contains('hidden')) {
+            return;
+        }
+        if (event.key === 'Escape') {
+            closeLightbox();
+        } else if (event.key === 'ArrowRight') {
+            showNext();
+        } else if (event.key === 'ArrowLeft') {
+            showPrev();
+        }
+    });
+})();
+</script>
 {% endblock %}

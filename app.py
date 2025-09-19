@@ -228,6 +228,29 @@ def _get_manual_video_record(conn, file_hash: str):
         abort(404)
     return row
 
+
+def _get_next_manual_video(conn, exclude_hash: str | None = None) -> str | None:
+    """Return the next manual-review video hash, optionally skipping current."""
+    query = [
+        """
+        SELECT file_hash
+        FROM scanned_files
+        WHERE manual_review_status IN ('pending', 'in_progress')
+        """
+    ]
+    params: list[str] = []
+    if exclude_hash:
+        query.append("AND file_hash != ?")
+        params.append(exclude_hash)
+    query.append(
+        "ORDER BY CASE manual_review_status WHEN 'pending' THEN 0 ELSE 1 END,"
+        "         COALESCE(last_attempt, CURRENT_TIMESTAMP) ASC,"
+        "         file_hash ASC"
+    )
+    query.append("LIMIT 1")
+    row = conn.execute("\n".join(query), params).fetchone()
+    return row['file_hash'] if row else None
+
 def extract_people_from_comment(comment):
     """Extracts a set of person names from a metadata comment field."""
     if not comment:
@@ -521,6 +544,8 @@ def manual_video_dashboard():
     """Lists videos that need manual people tagging."""
     _manual_feature_guard()
     conn = get_db_connection()
+    focus_person = request.args.get('person', '').strip()
+    focus_person_normalized = focus_person.lower() if focus_person else None
     rows = conn.execute(
         """
         SELECT
@@ -544,9 +569,21 @@ def manual_video_dashboard():
         """
     ).fetchall()
 
+    tag_rows = conn.execute(
+        "SELECT file_hash, person_name FROM video_people"
+    ).fetchall()
+    tags_by_file = {}
+    for row in tag_rows:
+        tags_by_file.setdefault(row['file_hash'], []).append(row['person_name'])
+
     videos = []
     for row in rows:
         video_path = row['last_known_filepath']
+        tags = sorted(tags_by_file.get(row['file_hash'], []), key=lambda name: name.lower())
+        matches_focus = bool(focus_person_normalized) and any(
+            tag.lower() == focus_person_normalized for tag in tags
+        )
+        needs_focus = bool(focus_person_normalized) and not matches_focus and row['manual_review_status'] in MANUAL_ACTIVE_STATUSES
         videos.append({
             'file_hash': row['file_hash'],
             'name': os.path.basename(video_path) if video_path else None,
@@ -556,6 +593,9 @@ def manual_video_dashboard():
             'face_count': row['face_count'],
             'missing': not (video_path and os.path.exists(video_path)),
             'last_attempt': row['last_attempt'],
+            'tags': tags,
+            'matches_focus': matches_focus,
+            'needs_focus': needs_focus,
         })
 
     counts = {status: 0 for status in MANUAL_ALL_STATUSES}
@@ -563,13 +603,47 @@ def manual_video_dashboard():
         counts[video['status']] = counts.get(video['status'], 0) + 1
     counts['total'] = len(videos)
 
+    def status_order(status):
+        return {
+            'pending': 0,
+            'in_progress': 1,
+            'done': 2,
+            'no_people': 3,
+            'not_required': 4,
+        }.get(status, 5)
+
     next_video = next((video for video in videos if video['status'] in MANUAL_ACTIVE_STATUSES), None)
+
+    if focus_person:
+        matching_videos = [video for video in videos if video['matches_focus']]
+        suggested_videos = [video for video in videos if video['needs_focus']]
+        other_videos = [
+            video for video in videos
+            if video not in matching_videos and video not in suggested_videos
+        ]
+    else:
+        matching_videos = []
+        suggested_videos = []
+        other_videos = videos
+
+    videos.sort(key=lambda video: (status_order(video['status']), (video['name'] or '').lower(), video['file_hash']))
+
+    matching_videos.sort(key=lambda video: (status_order(video['status']), (video['name'] or '').lower(), video['file_hash']))
+    suggested_videos.sort(key=lambda video: (status_order(video['status']), (video['name'] or '').lower(), video['file_hash']))
+    other_videos.sort(key=lambda video: (status_order(video['status']), (video['name'] or '').lower(), video['file_hash']))
+
+    known_people = _collect_known_people(conn)
 
     return render_template(
         'video_manual_list.html',
         videos=videos,
         counts=counts,
         next_video=next_video,
+        focus_person=focus_person,
+        matching_videos=matching_videos,
+        suggested_videos=suggested_videos,
+        other_videos=other_videos,
+        known_people=known_people,
     )
 
 
@@ -578,21 +652,11 @@ def manual_video_next():
     """Redirects to the next video requiring manual tagging."""
     _manual_feature_guard()
     conn = get_db_connection()
-    row = conn.execute(
-        """
-        SELECT file_hash
-        FROM scanned_files
-        WHERE manual_review_status IN ('pending', 'in_progress')
-        ORDER BY CASE manual_review_status WHEN 'pending' THEN 0 ELSE 1 END,
-                 COALESCE(last_attempt, CURRENT_TIMESTAMP) ASC,
-                 file_hash ASC
-        LIMIT 1
-        """
-    ).fetchone()
-    if not row:
+    next_hash = _get_next_manual_video(conn)
+    if not next_hash:
         flash('No videos waiting for manual tagging.', 'info')
         return redirect(url_for('manual_video_dashboard'))
-    return redirect(url_for('manual_video_detail', file_hash=row['file_hash']))
+    return redirect(url_for('manual_video_detail', file_hash=next_hash))
 
 
 @app.route('/videos/manual/<file_hash>')
@@ -601,6 +665,7 @@ def manual_video_detail(file_hash):
     _manual_feature_guard()
     conn = get_db_connection()
     record = _get_manual_video_record(conn, file_hash)
+    focus_person = request.args.get('focus_person', '').strip()
 
     status = record['manual_review_status']
     if status == 'not_required':
@@ -649,6 +714,7 @@ def manual_video_detail(file_hash):
         tags=tags,
         known_people=known_people,
         sample_count=len(sample_files),
+        focus_person=focus_person,
     )
 
 
@@ -669,9 +735,17 @@ def manual_video_add_tags(file_hash):
             if stripped:
                 submitted_names.add(stripped)
 
+    existing_person = request.form.get('existing_person', '')
+    if existing_person and existing_person.strip():
+        submitted_names.add(existing_person.strip())
+
     if not submitted_names:
         flash('Provide at least one name to add.', 'warning')
-        return redirect(url_for('manual_video_detail', file_hash=file_hash))
+        redirect_args = {'file_hash': file_hash}
+        focus_person = request.form.get('focus_person', '').strip()
+        if focus_person:
+            redirect_args['focus_person'] = focus_person
+        return redirect(url_for('manual_video_detail', **redirect_args))
 
     added = []
     duplicates = []
@@ -699,7 +773,11 @@ def manual_video_add_tags(file_hash):
     if invalid:
         flash("'Unknown' is reserved. Use the review buttons instead.", 'error')
 
-    return redirect(url_for('manual_video_detail', file_hash=file_hash))
+    redirect_args = {'file_hash': file_hash}
+    focus_person = request.form.get('focus_person', '').strip()
+    if focus_person:
+        redirect_args['focus_person'] = focus_person
+    return redirect(url_for('manual_video_detail', **redirect_args))
 
 
 @app.route('/videos/manual/<file_hash>/tags/remove', methods=['POST'])
@@ -712,7 +790,11 @@ def manual_video_remove_tags(file_hash):
     names = [name.strip() for name in request.form.getlist('person_name') if name.strip()]
     if not names:
         flash('Select at least one tag to remove.', 'warning')
-        return redirect(url_for('manual_video_detail', file_hash=file_hash))
+        redirect_args = {'file_hash': file_hash}
+        focus_person = request.form.get('focus_person', '').strip()
+        if focus_person:
+            redirect_args['focus_person'] = focus_person
+        return redirect(url_for('manual_video_detail', **redirect_args))
 
     conn.executemany(
         'DELETE FROM video_people WHERE file_hash = ? AND person_name = ?',
@@ -720,7 +802,11 @@ def manual_video_remove_tags(file_hash):
     )
     conn.commit()
     flash(f"Removed tags: {', '.join(names)}", 'success')
-    return redirect(url_for('manual_video_detail', file_hash=file_hash))
+    redirect_args = {'file_hash': file_hash}
+    focus_person = request.form.get('focus_person', '').strip()
+    if focus_person:
+        redirect_args['focus_person'] = focus_person
+    return redirect(url_for('manual_video_detail', **redirect_args))
 
 
 @app.route('/videos/manual/<file_hash>/status', methods=['POST'])
@@ -759,7 +845,17 @@ def manual_video_update_status(file_hash):
     else:
         flash('Marked video as reviewed with no identifiable people.', 'success')
 
-    return redirect(url_for('manual_video_detail', file_hash=file_hash))
+    focus_person = request.form.get('focus_person', '').strip()
+
+    next_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
+    if next_hash:
+        redirect_args = {'file_hash': next_hash}
+        if focus_person:
+            redirect_args['focus_person'] = focus_person
+        return redirect(url_for('manual_video_detail', **redirect_args))
+
+    flash('Great job! No more videos need manual tagging right now.', 'info')
+    return redirect(url_for('manual_video_dashboard'))
 
 
 @app.route('/videos/manual/<file_hash>/reshuffle', methods=['POST'])
@@ -768,6 +864,7 @@ def manual_video_reshuffle(file_hash):
     _manual_feature_guard()
     conn = get_db_connection()
     _get_manual_video_record(conn, file_hash)
+    focus_person = request.form.get('focus_person', '').strip()
     samples, video_path = _get_video_samples(conn, file_hash, regenerate=True)
     if not samples:
         if not (video_path and os.path.exists(video_path)):
@@ -776,7 +873,10 @@ def manual_video_reshuffle(file_hash):
             flash('Could not generate sample frames. Try again later.', 'error')
     else:
         flash('Generated a fresh set of frames.', 'success')
-    return redirect(url_for('manual_video_detail', file_hash=file_hash))
+    redirect_args = {'file_hash': file_hash}
+    if focus_person:
+        redirect_args['focus_person'] = focus_person
+    return redirect(url_for('manual_video_detail', **redirect_args))
 
 
 @app.route('/videos/manual/<file_hash>/frames/<path:filename>')

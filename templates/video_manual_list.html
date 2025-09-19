@@ -46,18 +46,43 @@
         </div>
     </div>
 
-    {% if videos %}
     <div class="card bg-base-100 shadow-lg">
-        <div class="card-body p-0">
+        <div class="card-body space-y-4">
+            <form method="get" action="{{ url_for('manual_video_dashboard') }}" class="space-y-2">
+                <label class="label"><span class="label-text font-semibold">Search existing people</span></label>
+                <div class="join w-full">
+                    <input
+                        type="text"
+                        name="person"
+                        list="manual-known-people"
+                        value="{{ focus_person }}"
+                        class="input input-bordered join-item w-full"
+                        placeholder="Type a name to jump to their videos"
+                    >
+                    <button type="submit" class="btn btn-primary join-item">Search</button>
+                    {% if focus_person %}
+                    <a href="{{ url_for('manual_video_dashboard') }}" class="btn btn-ghost join-item" title="Clear search">Reset</a>
+                    {% endif %}
+                </div>
+                <datalist id="manual-known-people">
+                    {% for name in known_people %}
+                    <option value="{{ name }}"></option>
+                    {% endfor %}
+                </datalist>
+                <p class="text-xs text-base-content/60">Use this search to find videos that already feature someone or still need that tag applied.</p>
+            </form>
+
+            {% macro render_video_table(video_list, focus_person) %}
+            {% if video_list %}
             <div class="overflow-x-auto">
                 <table class="table table-zebra">
                     <thead>
                         <tr>
                             <th>Video</th>
                             <th>Status</th>
-                            <th class="text-right">Tags</th>
+                            <th class="text-left">People Tags</th>
                             <th class="text-right">Faces Detected</th>
-                            <th></th>
+                            <th class="text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -67,8 +92,13 @@
                             'done': 'badge badge-success',
                             'no_people': 'badge'
                         } %}
-                        {% for video in videos %}
-                        <tr>
+                        {% for video in video_list %}
+                        <tr class="{% if video.matches_focus %}bg-primary/10{% endif %}">
+                            {% if focus_person %}
+                                {% set detail_url = url_for('manual_video_detail', file_hash=video.file_hash, focus_person=focus_person) %}
+                            {% else %}
+                                {% set detail_url = url_for('manual_video_detail', file_hash=video.file_hash) %}
+                            {% endif %}
                             <td class="whitespace-normal">
                                 <div class="flex flex-col">
                                     <span class="font-medium">{{ video.name or 'Unknown name' }}</span>
@@ -81,30 +111,78 @@
                             <td>
                                 <span class="{{ status_badges.get(video.status, 'badge') }} capitalize">{{ video.status.replace('_', ' ') }}</span>
                             </td>
-                            <td class="text-right">{{ video.tag_count }}</td>
+                            <td>
+                                <div class="flex flex-wrap gap-2">
+                                    {% if video.tags %}
+                                        {% for tag in video.tags %}
+                                        <span class="badge badge-outline">{{ tag }}</span>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-xs text-base-content/50">No tags yet</span>
+                                    {% endif %}
+                                </div>
+                            </td>
                             <td class="text-right">{{ video.face_count or 0 }}</td>
                             <td class="text-right">
-                                <a href="{{ url_for('manual_video_detail', file_hash=video.file_hash) }}" class="btn btn-sm btn-outline">Open</a>
+                                <div class="flex justify-end flex-wrap gap-2">
+                                    <a href="{{ detail_url }}" class="btn btn-sm btn-outline">Open</a>
+                                    {% if focus_person %}
+                                        {% if video.matches_focus %}
+                                            <span class="badge badge-primary badge-sm">Tagged</span>
+                                        {% elif video.needs_focus %}
+                                            <a href="{{ url_for('manual_video_detail', file_hash=video.file_hash, focus_person=focus_person) }}" class="btn btn-sm btn-primary">Tag {{ focus_person }}</a>
+                                        {% endif %}
+                                    {% endif %}
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+            {% endif %}
+            {% endmacro %}
+
+            {% if focus_person %}
+                {% if matching_videos %}
+                <div class="space-y-2">
+                    <h2 class="text-lg font-semibold">Videos already tagged with {{ focus_person }}</h2>
+                    {{ render_video_table(matching_videos, focus_person) }}
+                </div>
+                {% endif %}
+
+                {% if suggested_videos %}
+                <div class="space-y-2">
+                    <h2 class="text-lg font-semibold">Suggested videos to tag with {{ focus_person }}</h2>
+                    <p class="text-sm text-base-content/60">Jump in and add {{ focus_person }} to these pending reviews.</p>
+                    {{ render_video_table(suggested_videos, focus_person) }}
+                </div>
+                {% endif %}
+
+                {% if not matching_videos and not suggested_videos %}
+                <div class="alert bg-base-200">
+                    <span>No manual videos currently reference {{ focus_person }}. Once you add them, they will appear here.</span>
+                </div>
+                {% endif %}
+
+                {% if other_videos %}
+                <details class="collapse collapse-arrow bg-base-200/60">
+                    <summary class="collapse-title font-semibold">Show all manual videos</summary>
+                    <div class="collapse-content">
+                        {{ render_video_table(other_videos, focus_person) }}
+                    </div>
+                </details>
+                {% endif %}
+            {% else %}
+                {% if videos %}
+                    {{ render_video_table(videos, focus_person) }}
+                {% else %}
+                <div class="alert bg-base-100">
+                    <span>All manual tagging work is complete. New videos without faces will appear here automatically.</span>
+                </div>
+                {% endif %}
+            {% endif %}
         </div>
     </div>
-    {% else %}
-    <div class="alert bg-base-100 shadow-lg">
-        <div>
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20 10 10 0 010-20z"></path>
-            </svg>
-        </div>
-        <div>
-            <h3 class="font-semibold">No manual tagging needed</h3>
-            <div class="text-sm text-base-content/70">All videos either contain detected faces or are already reviewed.</div>
-        </div>
-    </div>
-    {% endif %}
 </div>
 {% endblock %}

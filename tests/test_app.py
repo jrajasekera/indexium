@@ -317,6 +317,53 @@ def test_manual_video_tagging_workflow(tmp_path, monkeypatch):
         assert status == 'no_people'
         assert count == 0
 
+    resp = client.get('/videos/manual?person=Bob')
+    assert resp.status_code == 200
+    assert b'No manual videos currently reference Bob' in resp.data
+
+
+def test_manual_status_redirects_to_next_video(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+
+    file_hash_one = 'vh1'
+    file_hash_two = 'vh2'
+
+    conn.execute(
+        "INSERT OR REPLACE INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        (file_hash_one, str(tmp_path / 'missing1.mp4'), 'pending', 0),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        (file_hash_two, str(tmp_path / 'missing2.mp4'), 'pending', 0),
+    )
+    conn.execute(
+        "INSERT INTO video_people (file_hash, person_name) VALUES (?, ?)",
+        (file_hash_one, 'Alice'),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            f'/videos/manual/{file_hash_one}/status',
+            data={'status': 'done'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith(f'/videos/manual/{file_hash_two}')
+
+    conn = sqlite3.connect(db_path)
+    status_one = conn.execute(
+        'SELECT manual_review_status FROM scanned_files WHERE file_hash = ?',
+        (file_hash_one,),
+    ).fetchone()[0]
+    status_two = conn.execute(
+        'SELECT manual_review_status FROM scanned_files WHERE file_hash = ?',
+        (file_hash_two,),
+    ).fetchone()[0]
+    assert status_one == 'done'
+    assert status_two == 'pending'
+
 
 def test_tag_group_select_buttons(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
