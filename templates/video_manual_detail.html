@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}Manual Tagging · {{ video.name or video.file_hash }}{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-8">
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+            <a href="{{ url_for('manual_video_dashboard') }}" class="btn btn-sm btn-ghost mb-2">← Back to list</a>
+            <h1 class="text-3xl font-bold text-base-content">{{ video.name or "Manual Video" }}</h1>
+            <div class="flex flex-wrap items-center gap-3 mt-2 text-sm text-base-content/70">
+                <span>Status: <span class="font-semibold capitalize">{{ video.status.replace('_', ' ') }}</span></span>
+                <span>Tags: <span class="font-semibold">{{ video.tag_count }}</span></span>
+                {% if video.path %}<span>Source: <span class="font-semibold">{{ video.path }}</span></span>{% endif %}
+            </div>
+            {% if video.missing %}
+            <div class="badge badge-error mt-3">Original file is missing</div>
+            {% endif %}
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{{ url_for('manual_video_next') }}" class="btn btn-outline">Next Pending</a>
+        </div>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-[minmax(0,2fr)_1fr]">
+        <div class="space-y-6">
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body">
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title">Sample Frames</h2>
+                        <form action="{{ url_for('manual_video_reshuffle', file_hash=video.file_hash) }}" method="post">
+                            <button type="submit" class="btn btn-sm btn-outline">Reshuffle</button>
+                        </form>
+                    </div>
+                    {% if sample_images %}
+                    <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                        {% for image in sample_images %}
+                        <div class="overflow-hidden rounded-xl border border-base-300">
+                            <img src="{{ image.url }}" alt="Sample frame {{ loop.index }}" class="object-cover w-full h-full" loading="lazy">
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% elif video.missing %}
+                    <div class="alert bg-base-200 mt-4">
+                        <span>Unable to generate frames because the source video is missing.</span>
+                    </div>
+                    {% else %}
+                    <div class="alert bg-base-200 mt-4">
+                        <span>No frames available. Try reshuffling to generate a new set.</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body space-y-4">
+                    <h2 class="card-title">Tagged People</h2>
+                    {% if tags %}
+                    <form action="{{ url_for('manual_video_remove_tags', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        <div class="space-y-2">
+                            {% for tag in tags %}
+                            <label class="flex items-center justify-between gap-3 p-2 bg-base-200 rounded-lg">
+                                <span>{{ tag }}</span>
+                                <input type="checkbox" class="checkbox checkbox-sm" name="person_name" value="{{ tag }}">
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <button type="submit" class="btn btn-sm btn-outline" onclick="return confirm('Remove selected tags?')">Remove selected</button>
+                    </form>
+                    {% else %}
+                    <p class="text-sm text-base-content/70">No tags yet. Add anyone who appears in this video.</p>
+                    {% endif %}
+                    <div class="divider">Add Tags</div>
+                    <form action="{{ url_for('manual_video_add_tags', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        <div>
+                            <label class="label"><span class="label-text">Choose existing people</span></label>
+                            <select name="selected_person" class="select select-bordered w-full" size="6" multiple>
+                                {% for name in known_people %}
+                                <option value="{{ name }}">{{ name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="label"><span class="label-text">Or add new names (comma or newline separated)</span></label>
+                            <textarea name="person_name" class="textarea textarea-bordered w-full" rows="2"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">Add Tags</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body space-y-3">
+                    <h2 class="card-title">Review Actions</h2>
+                    <form action="{{ url_for('manual_video_update_status', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        <input type="hidden" name="status" value="done" />
+                        <button type="submit" class="btn btn-success btn-block" {% if not tags %}disabled{% endif %}>Mark as Done</button>
+                    </form>
+                    <form action="{{ url_for('manual_video_update_status', file_hash=video.file_hash) }}" method="post" class="space-y-3">
+                        <input type="hidden" name="status" value="no_people" />
+                        <button type="submit" class="btn btn-secondary btn-block">Mark Reviewed — No People</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -13,6 +13,7 @@ A Python-based video face scanning and tagging application that automatically de
 - **Face Group Management**: Split groups, merge people, rename, and organize your tags
 - **Remove False Positives**: Delete mistaken face detections directly from the web UI
 - **Progress Tracking**: Visual progress indicators and statistics
+- **Manual Video Tagging Workflow**: Review videos without detected faces using sampled frames and assign people tags
 
 ## Screenshots
 
@@ -96,7 +97,11 @@ Then open your browser to `http://localhost:5001` to:
 - Merge faces of the same person
 - Manage your tagged people
 
-### 4. Write Metadata
+### 4. Tag Videos Without Faces
+
+Open `/videos/manual` in the web UI when a video has no detected faces. Indexium samples a grid of frames so you can tag anyone who appears or mark the clip as containing no recognizable people. Use the "Reshuffle" button for a new random set of frames, and mark videos as done (or no people) once reviewed.
+
+### 5. Write Metadata
 
 Once you've tagged faces, write the tags to your video files:
 - Click "Write All Named Tags" in the web interface
@@ -112,16 +117,20 @@ environment variables with sensible defaults:
 - `INDEXIUM_DB`: path to the SQLite database (default: `video_faces.db`)
 - `FRAME_SKIP`: how many frames to skip between scans (default: 25)
 - `CPU_CORES`: number of CPU cores to use (`None` uses all cores)
-- `SAVE_CHUNK_SIZE`: how often to save progress (default: 10)
+- `SAVE_CHUNK_SIZE`: how often to save progress (default: 4)
 - `SECRET_KEY`: Flask secret key
 - `FLASK_DEBUG`: run the web UI in debug mode
 - `AUTO_CLASSIFY_THRESHOLD`: distance threshold for automatic face naming (default: 0.3)
+- `NO_FACE_SAMPLE_COUNT`: number of frames to sample per manual-review video (default: 25)
+- `NO_FACE_SAMPLE_DIR`: directory for cached manual-review frame images (default: `thumbnails/no_faces`)
+- `MANUAL_VIDEO_REVIEW_ENABLED`: toggle the manual video tagging workflow (default: `true`)
 
 ## Database
 
-The application uses SQLite with two main tables:
-- `scanned_files`: Tracks processed videos by hash
+The application uses SQLite with these main tables:
+- `scanned_files`: Tracks processed videos by hash, face counts, manual review status, and cached sampling seeds
 - `faces`: Stores face data, locations, encodings, and tags
+- `video_people`: Manual tags that link videos-without-faces to the people who appear in them
 
 Database file: `video_faces.db`
 

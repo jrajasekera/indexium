@@ -149,6 +149,13 @@
                     <span>People</span>
                 </a>
 
+                <a href="{{ url_for('manual_video_dashboard') }}" class="nav-link {% if request.endpoint and request.endpoint.startswith('manual_video') %}active{% endif %}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v12H5a2 2 0 01-2-2V8a2 2 0 012-2z"></path>
+                    </svg>
+                    <span>Manual Tagging</span>
+                </a>
+
                 <div class="divider my-4"></div>
 
                 <button class="nav-link w-full justify-start" type="button" data-action="open-metadata-modal">
@@ -194,6 +201,17 @@
                             </div>
                             <div class="stat-title">Groups Remaining</div>
                             <div class="stat-value text-secondary">{{ stats.unnamed_groups_count }}</div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-figure text-accent">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v12H5a2 2 0 01-2-2V8a2 2 0 012-2z"></path>
+                                </svg>
+                            </div>
+                            <div class="stat-title">Manual Videos Pending</div>
+                            <div class="stat-value text-accent">{{ stats.manual_pending_videos }}</div>
+                            <div class="stat-desc">{{ stats.manual_completed_videos }} reviewed</div>
                         </div>
                     </div>
                 </div>

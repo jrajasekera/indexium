@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% block title %}Manual Video Tagging{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-8">
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-base-content">Manual Video Tagging</h1>
+            <p class="text-base-content/70 mt-1">Review videos without detected faces and add people tags.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{{ url_for('manual_video_next') }}" class="btn btn-primary" {% if (counts['pending'] or 0) + (counts['in_progress'] or 0) == 0 %}disabled{% endif %}>
+                Start Next Video
+            </a>
+            <a href="{{ url_for('manual_video_dashboard') }}" class="btn btn-outline">Refresh</a>
+        </div>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div class="card bg-base-100 shadow-sm">
+            <div class="card-body">
+                <p class="text-sm text-base-content/70">Pending</p>
+                <p class="text-3xl font-semibold">{{ counts['pending'] or 0 }}</p>
+                <p class="text-xs text-base-content/60">Waiting for review</p>
+            </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm">
+            <div class="card-body">
+                <p class="text-sm text-base-content/70">In Progress</p>
+                <p class="text-3xl font-semibold">{{ counts['in_progress'] or 0 }}</p>
+                <p class="text-xs text-base-content/60">Currently open</p>
+            </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm">
+            <div class="card-body">
+                <p class="text-sm text-base-content/70">Completed</p>
+                <p class="text-3xl font-semibold">{{ counts['done'] or 0 }}</p>
+                <p class="text-xs text-base-content/60">Tagged with people</p>
+            </div>
+        </div>
+        <div class="card bg-base-100 shadow-sm">
+            <div class="card-body">
+                <p class="text-sm text-base-content/70">No People</p>
+                <p class="text-3xl font-semibold">{{ counts['no_people'] or 0 }}</p>
+                <p class="text-xs text-base-content/60">Reviewed and confirmed empty</p>
+            </div>
+        </div>
+    </div>
+
+    {% if videos %}
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-zebra">
+                    <thead>
+                        <tr>
+                            <th>Video</th>
+                            <th>Status</th>
+                            <th class="text-right">Tags</th>
+                            <th class="text-right">Faces Detected</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set status_badges = {
+                            'pending': 'badge badge-warning',
+                            'in_progress': 'badge badge-info',
+                            'done': 'badge badge-success',
+                            'no_people': 'badge'
+                        } %}
+                        {% for video in videos %}
+                        <tr>
+                            <td class="whitespace-normal">
+                                <div class="flex flex-col">
+                                    <span class="font-medium">{{ video.name or 'Unknown name' }}</span>
+                                    <span class="text-xs text-base-content/60">{{ video.file_hash }}</span>
+                                    {% if video.missing %}
+                                    <span class="text-xs text-error">Original file missing</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <span class="{{ status_badges.get(video.status, 'badge') }} capitalize">{{ video.status.replace('_', ' ') }}</span>
+                            </td>
+                            <td class="text-right">{{ video.tag_count }}</td>
+                            <td class="text-right">{{ video.face_count or 0 }}</td>
+                            <td class="text-right">
+                                <a href="{{ url_for('manual_video_detail', file_hash=video.file_hash) }}" class="btn btn-sm btn-outline">Open</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert bg-base-100 shadow-lg">
+        <div>
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 110 20 10 10 0 010-20z"></path>
+            </svg>
+        </div>
+        <div>
+            <h3 class="font-semibold">No manual tagging needed</h3>
+            <div class="text-sm text-base-content/70">All videos either contain detected faces or are already reviewed.</div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -2,6 +2,11 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+
+def _str_to_bool(value: str) -> bool:
+    """Parse truthy environment strings into booleans."""
+    return value.lower() in {"1", "true", "yes", "on"}
+
 @dataclass
 class Config:
     """Application configuration loaded from environment variables."""
@@ -22,3 +27,10 @@ class Config:
     DBSCAN_MIN_SAMPLES: int = int(os.environ.get("DBSCAN_MIN_SAMPLES", "5"))
     FACE_DETECTION_MODEL: str = os.environ.get("FACE_DETECTION_MODEL", "hog")
     AUTO_CLASSIFY_THRESHOLD: float = float(os.environ.get("AUTO_CLASSIFY_THRESHOLD", "0.3"))
+
+    NO_FACE_SAMPLE_COUNT: int = int(os.environ.get("NO_FACE_SAMPLE_COUNT", "25"))
+    NO_FACE_SAMPLE_DIR: str = os.environ.get(
+        "NO_FACE_SAMPLE_DIR",
+        os.path.join(THUMBNAIL_DIR, "no_faces"),
+    )
+    MANUAL_VIDEO_REVIEW_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_VIDEO_REVIEW_ENABLED", "true"))

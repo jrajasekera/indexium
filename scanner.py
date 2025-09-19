@@ -150,9 +150,26 @@ def retry_failed_videos():
                 # Update database with successful retry
                 with sqlite3.connect(DATABASE_FILE) as conn:
                     cursor = conn.cursor()
+                    face_count = len(faces_list)
+                    manual_status = 'pending' if face_count == 0 else 'not_required'
                     cursor.execute(
-                        'UPDATE scanned_files SET processing_status = ?, error_message = NULL, last_attempt = CURRENT_TIMESTAMP WHERE file_hash = ?',
-                        ('completed', file_hash)
+                        '''
+                        UPDATE scanned_files
+                        SET processing_status = ?,
+                            error_message = NULL,
+                            last_attempt = CURRENT_TIMESTAMP,
+                            face_count = ?,
+                            manual_review_status = CASE
+                                WHEN ? = 'pending' THEN
+                                    CASE
+                                        WHEN manual_review_status IN ('done', 'no_people') THEN manual_review_status
+                                        ELSE 'pending'
+                                    END
+                                ELSE ?
+                            END
+                        WHERE file_hash = ?
+                        ''',
+                        ('completed', face_count, manual_status, manual_status, file_hash)
                     )
                     # Insert faces
                     for face_data in faces_list:
@@ -244,10 +261,23 @@ def setup_database():
             # Update existing rows with current timestamp
             cursor.execute("UPDATE scanned_files SET last_attempt = CURRENT_TIMESTAMP WHERE last_attempt IS NULL")
 
+        if 'face_count' not in columns:
+            logger.info("Adding face_count column to scanned_files table...")
+            cursor.execute("ALTER TABLE scanned_files ADD COLUMN face_count INTEGER DEFAULT NULL")
+
+        if 'manual_review_status' not in columns:
+            logger.info("Adding manual_review_status column to scanned_files table...")
+            cursor.execute("ALTER TABLE scanned_files ADD COLUMN manual_review_status TEXT DEFAULT 'not_required'")
+
+        if 'sample_seed' not in columns:
+            logger.info("Adding sample_seed column to scanned_files table...")
+            cursor.execute("ALTER TABLE scanned_files ADD COLUMN sample_seed INTEGER DEFAULT NULL")
+
         # Add indexes for faster lookups
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_file_hash ON faces (file_hash)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_cluster_id ON faces (cluster_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_scanned_files_status ON scanned_files (processing_status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scanned_files_manual_status ON scanned_files (manual_review_status)')
 
         # Add composite indexes for frequently queried combinations
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_person_cluster ON faces (person_name, cluster_id)')
@@ -255,6 +285,39 @@ def setup_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_file_person ON faces (file_hash, person_name)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces (person_name, id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_suggestion ON faces (cluster_id, suggested_person_name)')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS video_people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
+                person_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(file_hash, person_name),
+                FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_video_people_file_hash ON video_people (file_hash)')
+
+        # Backfill counts and manual review status for legacy records
+        cursor.execute(
+            '''
+            UPDATE scanned_files
+            SET face_count = (
+                SELECT COUNT(*) FROM faces WHERE faces.file_hash = scanned_files.file_hash
+            )
+            WHERE face_count IS NULL
+            '''
+        )
+        cursor.execute(
+            '''
+            UPDATE scanned_files
+            SET manual_review_status = 'pending'
+            WHERE manual_review_status = 'not_required'
+              AND (
+                  SELECT COUNT(*) FROM faces WHERE faces.file_hash = scanned_files.file_hash
+              ) = 0
+            '''
+        )
 
         conn.commit()
     logger.info("Database setup complete.")
@@ -387,19 +450,64 @@ def write_data_to_db(face_data, scanned_files_info, failed_files_info=None):
             cursor = conn.cursor()
 
             # Map hashes to paths for thumbnail generation
-            file_map = {h: p for h, p in scanned_files_info} if scanned_files_info else {}
+            file_map = {h: p for h, p, _ in scanned_files_info} if scanned_files_info else {}
 
             # Update successful files
             if scanned_files_info:
+                upsert_rows = []
+                for file_hash, path, face_count in scanned_files_info:
+                    manual_status = 'pending' if face_count == 0 else 'not_required'
+                    upsert_rows.append((file_hash, path, 'completed', face_count, manual_status))
+
                 cursor.executemany(
-                    'REPLACE INTO scanned_files (file_hash, last_known_filepath, processing_status, error_message, last_attempt) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
-                    [(h, p, 'completed', None) for h, p in scanned_files_info],
+                    '''
+                    INSERT INTO scanned_files (
+                        file_hash,
+                        last_known_filepath,
+                        processing_status,
+                        error_message,
+                        last_attempt,
+                        face_count,
+                        manual_review_status
+                    ) VALUES (?, ?, ?, NULL, CURRENT_TIMESTAMP, ?, ?)
+                    ON CONFLICT(file_hash) DO UPDATE SET
+                        last_known_filepath = excluded.last_known_filepath,
+                        processing_status = excluded.processing_status,
+                        error_message = NULL,
+                        last_attempt = CURRENT_TIMESTAMP,
+                        face_count = excluded.face_count,
+                        manual_review_status = CASE
+                            WHEN excluded.manual_review_status = 'pending' THEN
+                                CASE
+                                    WHEN scanned_files.manual_review_status IN ('done', 'no_people') THEN scanned_files.manual_review_status
+                                    ELSE 'pending'
+                                END
+                            WHEN excluded.manual_review_status IS NULL THEN scanned_files.manual_review_status
+                            ELSE excluded.manual_review_status
+                        END
+                    ''',
+                    upsert_rows,
                 )
 
             # Update failed files
             if failed_files_info:
                 cursor.executemany(
-                    'REPLACE INTO scanned_files (file_hash, last_known_filepath, processing_status, error_message, last_attempt) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+                    '''
+                    INSERT INTO scanned_files (
+                        file_hash,
+                        last_known_filepath,
+                        processing_status,
+                        error_message,
+                        last_attempt,
+                        face_count,
+                        manual_review_status
+                    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, NULL, 'not_required')
+                    ON CONFLICT(file_hash) DO UPDATE SET
+                        last_known_filepath = excluded.last_known_filepath,
+                        processing_status = excluded.processing_status,
+                        error_message = excluded.error_message,
+                        last_attempt = CURRENT_TIMESTAMP
+                    ''',
                     [(h, p, 'failed', err) for h, p, err in failed_files_info],
                 )
 
@@ -510,8 +618,8 @@ def scan_videos_parallel(handler):
 
             if success:
                 total_successful += 1
-                # We'll add the file to the DB with its hash and path
-                pending_files_info.append((file_hash, video_path))
+                face_count = len(faces_list)
+                pending_files_info.append((file_hash, video_path, face_count))
                 pending_faces.extend(faces_list)
             else:
                 total_failed += 1

@@ -17,6 +17,9 @@ def setup_app_db(tmp_path, monkeypatch):
     thumb_dir = tmp_path / 'thumbs'
     monkeypatch.setattr(app_module.config, 'THUMBNAIL_DIR', str(thumb_dir))
     monkeypatch.setattr(scanner_module.config, 'THUMBNAIL_DIR', str(thumb_dir))
+    sample_dir = thumb_dir / 'no_faces'
+    monkeypatch.setattr(app_module.config, 'NO_FACE_SAMPLE_DIR', str(sample_dir))
+    monkeypatch.setattr(scanner_module.config, 'NO_FACE_SAMPLE_DIR', str(sample_dir))
     scanner_module.setup_database()
     return db_path
 
@@ -52,6 +55,8 @@ def test_get_progress_stats(tmp_path, monkeypatch):
         stats = app_module.get_progress_stats()
     assert stats['unnamed_groups_count'] == 1
     assert stats['named_people_count'] == 2
+    assert stats['manual_pending_videos'] == 0
+    assert stats['manual_completed_videos'] == 0
 
 
 def test_remove_faces_route(tmp_path, monkeypatch):
@@ -203,6 +208,114 @@ def test_tag_group_pagination(tmp_path, monkeypatch):
         resp2 = client.get("/group/1?page=2")
         assert resp2.status_code == 200
         assert b"Page 2 of 2" in resp2.data
+
+
+def test_manual_video_tagging_workflow(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+
+    file_hash = 'vh1'
+    video_path = tmp_path / 'missing.mp4'
+    conn.execute(
+        "INSERT OR REPLACE INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        (file_hash, str(video_path), 'pending', 0),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        dashboard = client.get('/videos/manual')
+        assert dashboard.status_code == 200
+
+        resp = client.get(f'/videos/manual/{file_hash}')
+        assert resp.status_code == 200
+
+        conn = sqlite3.connect(db_path)
+        status = conn.execute(
+            'SELECT manual_review_status FROM scanned_files WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()[0]
+        assert status == 'in_progress'
+
+        # Cannot mark done without tags
+        resp = client.post(
+            f'/videos/manual/{file_hash}/status',
+            data={'status': 'done'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        conn = sqlite3.connect(db_path)
+        status = conn.execute(
+            'SELECT manual_review_status FROM scanned_files WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()[0]
+        assert status == 'in_progress'
+
+        # Add a tag
+        resp = client.post(
+            f'/videos/manual/{file_hash}/tags',
+            data={'person_name': 'Alice'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        conn = sqlite3.connect(db_path)
+        tags = conn.execute(
+            'SELECT person_name FROM video_people WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchall()
+        assert [row[0] for row in tags] == ['Alice']
+
+        # Remove the tag
+        resp = client.post(
+            f'/videos/manual/{file_hash}/tags/remove',
+            data={'person_name': ['Alice']},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        conn = sqlite3.connect(db_path)
+        count = conn.execute(
+            'SELECT COUNT(*) FROM video_people WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()[0]
+        assert count == 0
+
+        # Add another tag and mark as done
+        resp = client.post(
+            f'/videos/manual/{file_hash}/tags',
+            data={'person_name': 'Bob'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        resp = client.post(
+            f'/videos/manual/{file_hash}/status',
+            data={'status': 'done'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        conn = sqlite3.connect(db_path)
+        status = conn.execute(
+            'SELECT manual_review_status FROM scanned_files WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()[0]
+        assert status == 'done'
+
+        # Mark as no people clears tags
+        resp = client.post(
+            f'/videos/manual/{file_hash}/status',
+            data={'status': 'no_people'},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        conn = sqlite3.connect(db_path)
+        status = conn.execute(
+            'SELECT manual_review_status FROM scanned_files WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()[0]
+        count = conn.execute(
+            'SELECT COUNT(*) FROM video_people WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()[0]
+        assert status == 'no_people'
+        assert count == 0
 
 
 def test_tag_group_select_buttons(tmp_path, monkeypatch):
