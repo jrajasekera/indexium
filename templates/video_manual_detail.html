@@ -95,15 +95,16 @@
                         {% if focus_person %}
                         <input type="hidden" name="focus_person" value="{{ focus_person }}">
                         {% endif %}
-                        <label class="label"><span class="label-text">Search existing people</span></label>
+                        <label class="label"><span class="label-text">Add a person</span></label>
                         <div class="join w-full">
                             <input
                                 type="text"
-                                name="existing_person"
+                                name="person_name"
                                 list="detail-known-people"
                                 value="{{ focus_person }}"
                                 class="input input-bordered join-item w-full"
                                 placeholder="Start typing a name"
+                                autocomplete="off"
                             >
                             <button type="submit" class="btn btn-primary join-item">Add</button>
                         </div>
@@ -112,15 +113,7 @@
                             <option value="{{ name }}"></option>
                             {% endfor %}
                         </datalist>
-                        <p class="text-xs text-base-content/60">Press enter to add the highlighted person instantly.</p>
-                    </form>
-                    <form action="{{ url_for('manual_video_add_tags', file_hash=video.file_hash) }}" method="post" class="space-y-3">
-                        {% if focus_person %}
-                        <input type="hidden" name="focus_person" value="{{ focus_person }}">
-                        {% endif %}
-                        <label class="label"><span class="label-text">Add new names (comma or newline separated)</span></label>
-                        <textarea name="person_name" class="textarea textarea-bordered w-full" rows="2"></textarea>
-                        <button type="submit" class="btn btn-primary btn-block">Add Tags</button>
+                        <p class="text-xs text-base-content/60">Type a name and press enter or click Add. Existing names appear below; new names will be created.</p>
                     </form>
                 </div>
             </div>

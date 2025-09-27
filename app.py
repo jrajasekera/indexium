@@ -720,27 +720,15 @@ def manual_video_detail(file_hash):
 
 @app.route('/videos/manual/<file_hash>/tags', methods=['POST'])
 def manual_video_add_tags(file_hash):
-    """Adds one or more tags to a manual video."""
+    """Adds a single tag to a manual video."""
     _manual_feature_guard()
     conn = get_db_connection()
     _get_manual_video_record(conn, file_hash)
 
-    submitted_names = set()
-    submitted_names.update(name.strip() for name in request.form.getlist('selected_person') if name.strip())
+    submitted_name = request.form.get('person_name', '').strip()
 
-    raw_names = request.form.get('person_name', '')
-    if raw_names:
-        for name in re.split(r'[\n,]', raw_names):
-            stripped = name.strip()
-            if stripped:
-                submitted_names.add(stripped)
-
-    existing_person = request.form.get('existing_person', '')
-    if existing_person and existing_person.strip():
-        submitted_names.add(existing_person.strip())
-
-    if not submitted_names:
-        flash('Provide at least one name to add.', 'warning')
+    if not submitted_name:
+        flash('Provide a name to add.', 'warning')
         redirect_args = {'file_hash': file_hash}
         focus_person = request.form.get('focus_person', '').strip()
         if focus_person:
@@ -750,10 +738,10 @@ def manual_video_add_tags(file_hash):
     added = []
     duplicates = []
     invalid = []
-    for name in sorted(submitted_names, key=lambda value: value.lower()):
-        if name.lower() == 'unknown':
-            invalid.append(name)
-            continue
+    name = submitted_name
+    if name.lower() == 'unknown':
+        invalid.append(name)
+    else:
         try:
             conn.execute(
                 'INSERT INTO video_people (file_hash, person_name) VALUES (?, ?)',
