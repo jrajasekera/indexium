@@ -156,6 +156,7 @@ environment variables with sensible defaults:
 - `INDEXIUM_OCR_MIN_TEXT_LENGTH`: minimum text length to keep (default: 3)
 - `INDEXIUM_OCR_MAX_TEXT_LENGTH`: maximum text length retained (default: 80)
 - `INDEXIUM_OCR_MAX_RESULTS`: cap of unique OCR strings stored per video (default: 200)
+- `INDEXIUM_OCR_TOP_FRAGMENTS`: number of highest-ranked substrings saved per video (default: 10)
 
 ## Database
 

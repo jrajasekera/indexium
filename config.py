@@ -47,3 +47,4 @@ class Config:
     OCR_MIN_TEXT_LENGTH: int = int(os.environ.get("INDEXIUM_OCR_MIN_TEXT_LENGTH", "3"))
     OCR_MAX_TEXT_LENGTH: int = int(os.environ.get("INDEXIUM_OCR_MAX_TEXT_LENGTH", "80"))
     OCR_MAX_RESULTS_PER_VIDEO: int = int(os.environ.get("INDEXIUM_OCR_MAX_RESULTS", "200"))
+    OCR_TOP_FRAGMENT_COUNT: int = int(os.environ.get("INDEXIUM_OCR_TOP_FRAGMENTS", "10"))

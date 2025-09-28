@@ -23,6 +23,7 @@ from flask import (
 )
 
 from config import Config
+from text_utils import calculate_top_text_fragments, MIN_FRAGMENT_LENGTH
 
 config = Config()
 
@@ -53,65 +54,7 @@ MANUAL_FINAL_STATUSES = {"done", "no_people"}
 MANUAL_ALL_STATUSES = MANUAL_ACTIVE_STATUSES | MANUAL_FINAL_STATUSES | {"not_required"}
 SAMPLE_MAX_WIDTH = 640
 SAMPLE_MAX_HEIGHT = 360
-MIN_TEXT_FRAGMENT_LENGTH = 4
-
-
-def _calculate_top_text_fragments(entries, max_results=5):
-    """Return the top substrings by frequency and length from OCR text entries."""
-    if not entries:
-        return []
-
-    substring_data: dict[str, dict[str, object]] = {}
-    min_length = MIN_TEXT_FRAGMENT_LENGTH
-
-    for raw_text, weight in entries:
-        if not raw_text:
-            continue
-        weight = max(int(weight or 0), 0)
-        if weight == 0:
-            weight = 1
-
-        normalized = raw_text.lower()
-        if len(normalized) < min_length:
-            continue
-
-        per_string_seen: set[str] = set()
-        for start in range(len(normalized) - min_length + 1):
-            for end in range(start + min_length, len(normalized) + 1):
-                substring_lower = normalized[start:end]
-                if substring_lower in per_string_seen:
-                    continue
-                per_string_seen.add(substring_lower)
-
-                display_slice = raw_text[start:end]
-                info = substring_data.get(substring_lower)
-                if info is None:
-                    info = {
-                        "count": 0,
-                        "length": end - start,
-                        "display": display_slice,
-                    }
-                    substring_data[substring_lower] = info
-
-                info["count"] = int(info["count"]) + weight
-
-    if not substring_data:
-        return []
-
-    ranked = sorted(
-        (
-            {
-                "substring": info["display"],
-                "lower": key,
-                "count": int(info["count"]),
-                "length": int(info["length"]),
-            }
-            for key, info in substring_data.items()
-        ),
-        key=lambda item: (-item["count"], -item["length"], item["lower"]),
-    )
-
-    return ranked[:max_results]
+MIN_TEXT_FRAGMENT_LENGTH = max(MIN_FRAGMENT_LENGTH, config.OCR_MIN_TEXT_LENGTH)
 
 
 def _manual_feature_guard():
@@ -537,14 +480,11 @@ def tag_group(cluster_id):
         ).fetchall()
 
         dedup_global = {}
-        weighted_entries = []
         for row in rows:
             raw_text = (row['raw_text'] or '').strip()
             if not raw_text or len(raw_text) < MIN_TEXT_FRAGMENT_LENGTH:
                 continue
             normalized = raw_text.lower()
-            weight = row['occurrence_count'] or 1
-
             per_file = ocr_by_file.setdefault(row['file_hash'], [])
             if all(text.lower() != normalized for text in per_file):
                 per_file.append(raw_text)
@@ -552,7 +492,6 @@ def tag_group(cluster_id):
             entry = dedup_global.setdefault(normalized, {'raw_text': raw_text, 'file_hashes': set()})
             entry['raw_text'] = raw_text
             entry['file_hashes'].add(row['file_hash'])
-            weighted_entries.append((raw_text, weight))
 
         for file_hash, values in ocr_by_file.items():
             values.sort(key=lambda text: text.lower())
@@ -570,7 +509,26 @@ def tag_group(cluster_id):
             )
         ocr_aggregated.sort(key=lambda item: item['raw_text'].lower())
 
-        ocr_top_fragments = _calculate_top_text_fragments(weighted_entries)
+        fragment_rows = conn.execute(
+            f'''
+                SELECT file_hash, fragment_text, occurrence_count, text_length, rank
+                FROM video_text_fragments
+                WHERE file_hash IN ({placeholders})
+                ORDER BY rank
+            ''',
+            file_hashes,
+        ).fetchall()
+
+        if fragment_rows:
+            fragment_entries = [
+                (row['fragment_text'], row['occurrence_count'])
+                for row in fragment_rows
+            ]
+            ocr_top_fragments = calculate_top_text_fragments(
+                fragment_entries,
+                top_n=5,
+                min_length=MIN_TEXT_FRAGMENT_LENGTH,
+            )
 
     ocr_text_by_file_items = [
         {
@@ -839,7 +797,6 @@ def manual_video_detail(file_hash):
 
     ocr_entries = []
     seen_texts = set()
-    weighted_entries = []
     for row in text_rows:
         raw_text = (row['raw_text'] or '').strip()
         if not raw_text or len(raw_text) < MIN_TEXT_FRAGMENT_LENGTH:
@@ -849,7 +806,6 @@ def manual_video_detail(file_hash):
             continue
         seen_texts.add(normalized)
         occurrence = row['occurrence_count'] or 1
-        weighted_entries.append((raw_text, occurrence))
         ocr_entries.append(
             {
                 'raw_text': raw_text,
@@ -857,6 +813,26 @@ def manual_video_detail(file_hash):
                 'occurrence_count': occurrence,
             }
         )
+
+    fragment_rows = conn.execute(
+        """
+        SELECT fragment_text, occurrence_count, text_length
+        FROM video_text_fragments
+        WHERE file_hash = ?
+        ORDER BY rank
+        LIMIT 5
+        """,
+        (file_hash,),
+    ).fetchall()
+
+    video_top_fragments = [
+        {
+            'substring': row['fragment_text'],
+            'count': row['occurrence_count'],
+            'length': row['text_length'],
+        }
+        for row in fragment_rows
+    ]
 
     known_people = _collect_known_people(conn)
     video_info = {
@@ -880,7 +856,7 @@ def manual_video_detail(file_hash):
         sample_count=len(sample_files),
         focus_person=focus_person,
         video_text_entries=ocr_entries,
-        video_text_top_fragments=_calculate_top_text_fragments(weighted_entries),
+        video_text_top_fragments=video_top_fragments,
     )
 
 

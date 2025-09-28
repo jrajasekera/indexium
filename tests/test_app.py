@@ -7,6 +7,7 @@ import numpy as np
 
 import app as app_module
 import scanner as scanner_module
+from text_utils import calculate_top_text_fragments
 
 
 def setup_app_db(tmp_path, monkeypatch):
@@ -31,14 +32,11 @@ def test_calculate_top_text_fragments_prefers_frequent_longer_substrings():
         ("World Hello", 2),
     ]
 
-    results = app_module._calculate_top_text_fragments(entries)
+    results = calculate_top_text_fragments(entries, top_n=5)
     assert results
-    # "Hello" appears 3 times (weighted) and should be first
     assert results[0]['substring'].strip().lower() == 'hello'
-    assert results[0]['count'] == 4  # weights include the duplicate entry
-
-    # Ensure substrings shorter than 4 are not included
-    assert all(len(item['lower']) >= 4 for item in results)
+    assert results[0]['count'] == 4
+    assert all(len(item['substring']) >= 4 for item in results)
 
 
 def test_skip_cluster_route(tmp_path, monkeypatch):

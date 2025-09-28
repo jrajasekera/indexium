@@ -6,6 +6,7 @@ from multiprocessing import Pool
 import numpy as np
 
 import scanner as scanner_module
+from text_utils import calculate_top_text_fragments
 
 DELAY_MAP = {}
 HASH_MAP = {}
@@ -146,11 +147,18 @@ def test_write_data_to_db_persists_ocr(tmp_path, monkeypatch):
         },
     ]
 
+    fragments = calculate_top_text_fragments(
+        [(item['raw_text'], item['occurrence_count']) for item in ocr_payload],
+        scanner_module.TOP_FRAGMENT_COUNT,
+        scanner_module.MIN_OCR_TEXT_LENGTH,
+    )
+
     scanner_module.write_data_to_db(
         face_data=[],
         scanned_files_info=[('hash1', str(video_path), 0, len(ocr_payload))],
         failed_files_info=None,
         ocr_text_data=[('hash1', ocr_payload)],
+        ocr_fragments_data=[('hash1', fragments)],
     )
 
     conn = sqlite3.connect(db_path)
@@ -160,6 +168,12 @@ def test_write_data_to_db_persists_ocr(tmp_path, monkeypatch):
     ).fetchall()
     assert len(rows) == 2
     assert {row[1] for row in rows} == {'hello world', 'indexium'}
+
+    fragment_rows = conn.execute(
+        "SELECT fragment_text, occurrence_count FROM video_text_fragments WHERE file_hash = ? ORDER BY rank",
+        ('hash1',),
+    ).fetchall()
+    assert fragment_rows
 
     ocr_meta = conn.execute(
         "SELECT ocr_text_count, ocr_last_updated, manual_review_status FROM scanned_files WHERE file_hash = ?",
@@ -202,9 +216,15 @@ def test_refresh_ocr_data_updates_existing_rows(tmp_path, monkeypatch):
         }
     ]
 
+    sample_fragments = calculate_top_text_fragments(
+        [(item['raw_text'], item['occurrence_count']) for item in sample_entries],
+        scanner_module.TOP_FRAGMENT_COUNT,
+        scanner_module.MIN_OCR_TEXT_LENGTH,
+    )
+
     def fake_process(job):
         file_path, file_hash = job
-        return (file_hash, file_path, True, [], sample_entries, None)
+        return (file_hash, file_path, True, [], sample_entries, sample_fragments, None)
 
     def fake_init():
         scanner_module.ACTIVE_OCR_BACKEND = 'easyocr'
@@ -220,6 +240,12 @@ def test_refresh_ocr_data_updates_existing_rows(tmp_path, monkeypatch):
         ('hash-refresh',),
     ).fetchall()
     assert rows == [('Refresh Me', 'refresh me')]
+
+    fragment_rows = conn.execute(
+        "SELECT fragment_text FROM video_text_fragments WHERE file_hash = ?",
+        ('hash-refresh',),
+    ).fetchall()
+    assert fragment_rows
 
     ocr_meta = conn.execute(
         "SELECT ocr_text_count FROM scanned_files WHERE file_hash = ?",
@@ -249,6 +275,11 @@ def test_cleanup_ocr_text_removes_short_entries(tmp_path, monkeypatch):
 
     rows = conn.execute("SELECT raw_text FROM video_text WHERE file_hash = 'hash-clean'").fetchall()
     assert [row[0] for row in rows] == ['ok text']
+
+    fragment_rows = conn.execute(
+        "SELECT fragment_text FROM video_text_fragments WHERE file_hash = 'hash-clean'",
+    ).fetchall()
+    assert fragment_rows
 
     updated = conn.execute(
         "SELECT ocr_text_count FROM scanned_files WHERE file_hash = 'hash-clean'",

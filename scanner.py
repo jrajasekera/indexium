@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - optional fallback dependency
 from config import Config
 from signal_handler import SignalHandler
 from util import get_file_hash
+from text_utils import calculate_top_text_fragments
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,6 +54,7 @@ OCR_MIN_TEXT_LENGTH = config.OCR_MIN_TEXT_LENGTH
 OCR_MAX_TEXT_LENGTH = max(config.OCR_MIN_TEXT_LENGTH, config.OCR_MAX_TEXT_LENGTH)
 OCR_MAX_RESULTS_PER_VIDEO = max(1, config.OCR_MAX_RESULTS_PER_VIDEO)
 MIN_OCR_TEXT_LENGTH = max(4, OCR_MIN_TEXT_LENGTH)
+TOP_FRAGMENT_COUNT = max(1, config.OCR_TOP_FRAGMENT_COUNT)
 
 _ocr_reader = None
 _easyocr_worker: Optional[tuple] = None  # (process, request_queue, response_queue)
@@ -301,6 +303,38 @@ def diagnose_ocr_environment():
     logger.info("--- End OCR Diagnostics ---")
 
 
+def _store_fragments(cursor, file_hash: str, fragments: List[Dict[str, Any]]):
+    cursor.execute('DELETE FROM video_text_fragments WHERE file_hash = ?', (file_hash,))
+    if not fragments:
+        return
+
+    limited = fragments[:TOP_FRAGMENT_COUNT]
+    payload = [
+        (
+            file_hash,
+            idx + 1,
+            fragment.get('substring'),
+            (fragment.get('lower') or fragment.get('substring', '')).lower(),
+            fragment.get('count', 0),
+            fragment.get('length', len(fragment.get('substring', ''))),
+        )
+        for idx, fragment in enumerate(limited)
+    ]
+    cursor.executemany(
+        '''
+        INSERT INTO video_text_fragments (
+            file_hash,
+            rank,
+            fragment_text,
+            fragment_lower,
+            occurrence_count,
+            text_length
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        payload,
+    )
+
+
 def _update_ocr_counts(cursor, file_hashes: List[str]):
     """Recalculate stored OCR counts for the given file hashes."""
     for file_hash in file_hashes:
@@ -318,6 +352,20 @@ def _update_ocr_counts(cursor, file_hashes: List[str]):
             """,
             (count, count, file_hash),
         )
+
+
+def _recompute_fragments(cursor, file_hash: str):
+    cursor.execute(
+        "SELECT raw_text, occurrence_count FROM video_text WHERE file_hash = ?",
+        (file_hash,),
+    )
+    entries = [
+        (row[0], row[1])
+        for row in cursor.fetchall()
+        if row[0]
+    ]
+    fragments = calculate_top_text_fragments(entries, TOP_FRAGMENT_COUNT, MIN_OCR_TEXT_LENGTH)
+    _store_fragments(cursor, file_hash, fragments)
 
 
 def cleanup_ocr_text(min_length: Optional[int] = None):
@@ -340,6 +388,8 @@ def cleanup_ocr_text(min_length: Optional[int] = None):
             "DELETE FROM video_text WHERE LENGTH(TRIM(raw_text)) < ?",
             (threshold,),
         )
+        for file_hash in affected:
+            _recompute_fragments(cursor, file_hash)
         _update_ocr_counts(cursor, affected)
         conn.commit()
 
@@ -622,7 +672,7 @@ def retry_failed_videos():
 
             # Process the video
             result = process_video_job((video_path, file_hash))
-            _, _, success, faces_list, ocr_entries, error_message = result
+            _, _, success, faces_list, ocr_entries, ocr_fragments, error_message = result
 
             if success:
                 face_count = len(faces_list)
@@ -631,6 +681,7 @@ def retry_failed_videos():
                     [(file_hash, video_path, face_count, len(ocr_entries))],
                     None,
                     [(file_hash, ocr_entries)],
+                    [(file_hash, ocr_fragments)],
                 )
                 successful_retries += 1
                 logger.info(f"Successfully retried: {video_path}")
@@ -639,6 +690,7 @@ def retry_failed_videos():
                     [],
                     [],
                     [(file_hash, video_path, error_message)],
+                    [],
                     [],
                 )
                 logger.warning(f"Retry failed for {video_path}: {error_message}")
@@ -693,7 +745,7 @@ def refresh_ocr_data(target_hashes: Optional[List[str]] = None):
             continue
 
         result = process_video_job((video_path, file_hash))
-        _, _, success, _, ocr_entries, error_message = result
+        _, _, success, _, ocr_entries, ocr_fragments, error_message = result
 
         if not success:
             logger.warning("OCR refresh failed for %s: %s", video_path, error_message)
@@ -703,6 +755,7 @@ def refresh_ocr_data(target_hashes: Optional[List[str]] = None):
         try:
             with sqlite3.connect(DATABASE_FILE, timeout=30) as conn:
                 cursor = conn.cursor()
+                cursor.execute('DELETE FROM video_text WHERE file_hash = ?', (file_hash,))
                 cursor.execute('DELETE FROM video_text WHERE file_hash = ?', (file_hash,))
                 if ocr_entries:
                     payload = [
@@ -731,6 +784,8 @@ def refresh_ocr_data(target_hashes: Optional[List[str]] = None):
                         ''',
                         payload,
                     )
+
+                _store_fragments(cursor, file_hash, ocr_fragments)
 
                 cursor.execute(
                     '''
@@ -848,6 +903,23 @@ def setup_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_suggestion ON faces (cluster_id, suggested_person_name)')
 
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS video_text_fragments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
+                rank INTEGER NOT NULL,
+                fragment_text TEXT NOT NULL,
+                fragment_lower TEXT NOT NULL,
+                occurrence_count INTEGER NOT NULL,
+                text_length INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(file_hash, fragment_lower),
+                FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_text_fragments_file_hash ON video_text_fragments (file_hash)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_text_fragments_rank ON video_text_fragments (file_hash, rank)')
+
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS video_text (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_hash TEXT NOT NULL,
@@ -931,7 +1003,7 @@ def process_video_job(job_data):
             if not video_capture.isOpened():
                 error_msg = "Could not open video file with OpenCV"
                 logger.error(f"OpenCV error for {video_path}: {error_msg}")
-                return (file_hash, video_path, False, [], [], error_msg)
+                return (file_hash, video_path, False, [], [], [], error_msg)
 
             fps = video_capture.get(cv2.CAP_PROP_FPS) or 0.0
             frame_count = 0
@@ -950,7 +1022,7 @@ def process_video_job(job_data):
                             error_msg = f"Too many corrupted frames ({corrupted_frames})"
                             logger.error(f"Frame corruption in {video_path}: {error_msg}")
                             video_capture.release()
-                            return (file_hash, video_path, False, [], [], error_msg)
+                            return (file_hash, video_path, False, [], [], [], error_msg)
                         frame_count += 1
                         continue
 
@@ -997,13 +1069,32 @@ def process_video_job(job_data):
 
             video_capture.release()
             ocr_entries = serialize_ocr_entries(file_hash, ocr_aggregator)
+            weighted_entries = [
+                (item['raw_text'], item.get('occurrence_count', 1))
+                for item in ocr_entries
+                if item.get('raw_text')
+            ]
+            top_fragments = calculate_top_text_fragments(
+                weighted_entries,
+                TOP_FRAGMENT_COUNT,
+                MIN_OCR_TEXT_LENGTH,
+            )
             logger.info(
-                "Successfully processed %s. Found %s faces and %s text snippets.",
+                "Successfully processed %s. Found %s faces, %s text snippets, %s top fragments.",
                 video_path,
                 len(faces_found_in_video),
                 len(ocr_entries),
+                len(top_fragments),
             )
-            return (file_hash, video_path, True, faces_found_in_video, ocr_entries, None)
+            return (
+                file_hash,
+                video_path,
+                True,
+                faces_found_in_video,
+                ocr_entries,
+                top_fragments,
+                None,
+            )
 
         except cv2.error as e:
             error_msg = f"OpenCV error: {str(e)}"
@@ -1024,10 +1115,16 @@ def process_video_job(job_data):
 
     error_msg = f"Failed after {max_retries} attempts"
     logger.error(f"Final failure for {video_path}: {error_msg}")
-    return (file_hash, video_path, False, [], [], error_msg)
+    return (file_hash, video_path, False, [], [], [], error_msg)
 
 
-def write_data_to_db(face_data, scanned_files_info, failed_files_info=None, ocr_text_data=None):
+def write_data_to_db(
+    face_data,
+    scanned_files_info,
+    failed_files_info=None,
+    ocr_text_data=None,
+    ocr_fragments_data=None,
+):
     """Writes collected scan results to SQLite and saves thumbnails."""
     if (
         not face_data
@@ -1059,6 +1156,11 @@ def write_data_to_db(face_data, scanned_files_info, failed_files_info=None, ocr_
             ocr_map: Dict[str, List[Dict[str, Any]]] = (
                 {file_hash: entries for file_hash, entries in ocr_text_data}
                 if ocr_text_data
+                else {}
+            )
+            fragment_map: Dict[str, List[Dict[str, Any]]] = (
+                {file_hash: fragments for file_hash, fragments in ocr_fragments_data}
+                if ocr_fragments_data
                 else {}
             )
 
@@ -1130,8 +1232,10 @@ def write_data_to_db(face_data, scanned_files_info, failed_files_info=None, ocr_
                 )
 
             # Replace OCR text entries for processed files
+            processed_hashes = set()
             if ocr_map:
                 for file_hash, entries in ocr_map.items():
+                    processed_hashes.add(file_hash)
                     cursor.execute('DELETE FROM video_text WHERE file_hash = ?', (file_hash,))
                     if not entries:
                         continue
@@ -1161,6 +1265,15 @@ def write_data_to_db(face_data, scanned_files_info, failed_files_info=None, ocr_
                         ''',
                         payload,
                     )
+
+            if fragment_map or processed_hashes:
+                target_hashes = set(fragment_map.keys()) | processed_hashes
+                for file_hash in target_hashes:
+                    fragments = fragment_map.get(file_hash)
+                    if fragments is None:
+                        _recompute_fragments(cursor, file_hash)
+                    else:
+                        _store_fragments(cursor, file_hash, fragments)
 
             # Insert faces
             if face_data:
@@ -1253,6 +1366,7 @@ def scan_videos_parallel(handler):
     pending_files_info = []
     pending_failed_info = []
     pending_ocr_entries = []
+    pending_ocr_fragments = []
     total_processed = 0
     total_successful = 0
     total_failed = 0
@@ -1265,7 +1379,7 @@ def scan_videos_parallel(handler):
             if handler.shutdown_requested:
                 break  # Exit the loop if shutdown is requested
 
-            file_hash, video_path, success, faces_list, ocr_entries, error_message = result
+            file_hash, video_path, success, faces_list, ocr_entries, ocr_fragments, error_message = result
             total_processed += 1
 
             if success:
@@ -1275,6 +1389,7 @@ def scan_videos_parallel(handler):
                 pending_files_info.append((file_hash, video_path, face_count, ocr_unique_count))
                 pending_faces.extend(faces_list)
                 pending_ocr_entries.append((file_hash, ocr_entries))
+                pending_ocr_fragments.append((file_hash, ocr_fragments))
             else:
                 total_failed += 1
                 logger.warning(f"Failed to process {video_path}: {error_message}")
@@ -1287,13 +1402,20 @@ def scan_videos_parallel(handler):
                     pending_files_info,
                     pending_failed_info,
                     pending_ocr_entries,
+                    pending_ocr_fragments,
                 )
-                pending_faces, pending_files_info, pending_failed_info, pending_ocr_entries = [], [], [], []
+                pending_faces, pending_files_info, pending_failed_info, pending_ocr_entries, pending_ocr_fragments = [], [], [], [], []
 
     # After the loop (or on shutdown), save any remaining data
-    if pending_faces or pending_files_info or pending_failed_info or pending_ocr_entries:
+    if pending_faces or pending_files_info or pending_failed_info or pending_ocr_entries or pending_ocr_fragments:
         logger.info("Performing final save...")
-        write_data_to_db(pending_faces, pending_files_info, pending_failed_info, pending_ocr_entries)
+        write_data_to_db(
+            pending_faces,
+            pending_files_info,
+            pending_failed_info,
+            pending_ocr_entries,
+            pending_ocr_fragments,
+        )
 
     # Print summary
     logger.info(f"Video scanning complete. Processed: {total_processed}, Successful: {total_successful}, Failed: {total_failed}")
