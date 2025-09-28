@@ -234,6 +234,7 @@ def test_refresh_ocr_data_updates_existing_rows(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner_module, 'OCR_ENABLED', True, raising=False)
     monkeypatch.setattr(scanner_module, 'initialize_ocr_backend', fake_init, raising=False)
     monkeypatch.setattr(scanner_module, 'process_video_job', fake_process)
+    monkeypatch.setattr(scanner_module, 'pytesseract', None, raising=False)
 
     scanner_module.refresh_ocr_data(['hash-refresh'])
 
@@ -249,9 +250,79 @@ def test_refresh_ocr_data_updates_existing_rows(tmp_path, monkeypatch):
     ).fetchall()
     assert fragment_rows
 
+
+def test_continue_ocr_data_skips_completed(tmp_path, monkeypatch):
+    db_path = setup_temp_db(tmp_path, monkeypatch)
+    video1 = tmp_path / 'vid1.mp4'
+    video2 = tmp_path / 'vid2.mp4'
+    video1.write_bytes(b'vid1')
+    video2.write_bytes(b'vid2')
+
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        """
+        INSERT INTO scanned_files (
+            file_hash,
+            last_known_filepath,
+            processing_status,
+            face_count,
+            manual_review_status,
+            ocr_text_count
+        ) VALUES (?, ?, 'completed', ?, 'not_required', ?)
+        """,
+        [
+            ('hash1', str(video1), 0, 0),
+            ('hash2', str(video2), 0, 2),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO video_text (file_hash, raw_text, normalized_text, occurrence_count) VALUES (?, ?, ?, ?)",
+        ('hash2', 'existing', 'existing', 1),
+    )
+    conn.commit()
+
+    sample_entries = [
+        {
+            'raw_text': 'Only Once',
+            'normalized_text': 'only once',
+            'confidence': 0.9,
+            'first_seen_frame': 0,
+            'first_seen_timestamp_ms': 0,
+            'occurrence_count': 1,
+        }
+    ]
+    sample_fragments = calculate_top_text_fragments(
+        [(item['raw_text'], item['occurrence_count']) for item in sample_entries],
+        scanner_module.TOP_FRAGMENT_COUNT,
+        scanner_module.MIN_OCR_TEXT_LENGTH,
+    )
+
+    processed = []
+
+    def fake_process(job):
+        processed.append(job)
+        file_path, file_hash = job
+        return (file_hash, file_path, True, [], sample_entries, sample_fragments, None)
+
+    def fake_init():
+        scanner_module.ACTIVE_OCR_BACKEND = 'easyocr'
+
+    monkeypatch.setattr(scanner_module, 'OCR_ENABLED', True, raising=False)
+    monkeypatch.setattr(scanner_module, 'initialize_ocr_backend', fake_init, raising=False)
+    monkeypatch.setattr(scanner_module, 'process_video_job', fake_process)
+    monkeypatch.setattr(scanner_module, 'pytesseract', None, raising=False)
+
+    scanner_module.continue_ocr_data()
+
+    assert processed == [(str(video1), 'hash1')]
+
+    rows = conn.execute(
+        "SELECT raw_text FROM video_text WHERE file_hash = 'hash1'"
+    ).fetchall()
+    assert rows
     ocr_meta = conn.execute(
         "SELECT ocr_text_count FROM scanned_files WHERE file_hash = ?",
-        ('hash-refresh',),
+        ('hash1',),
     ).fetchone()
     assert ocr_meta[0] == 1
 

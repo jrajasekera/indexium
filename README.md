@@ -132,6 +132,14 @@ python scanner.py cleanup_ocr           # drops OCR text shorter than 4 chars (c
 python scanner.py cleanup_ocr 6         # optional custom minimum length
 ```
 
+`refresh_ocr` now runs in parallel, reusing the same worker pool logic as a full scan. If EasyOCR is configured but unavailable in worker processes, the command automatically falls back to Tesseract (sequentially if no GPU-safe backend exists).
+
+To process only videos that are missing OCR text, use:
+
+```bash
+python scanner.py continue_ocr
+```
+
 ## Configuration
 
 All configuration is centralized in `config.py`. Values are loaded from
