@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 
 def _str_to_bool(value: str) -> bool:
@@ -34,3 +34,16 @@ class Config:
         os.path.join(THUMBNAIL_DIR, "no_faces"),
     )
     MANUAL_VIDEO_REVIEW_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_VIDEO_REVIEW_ENABLED", "true"))
+
+    OCR_ENABLED: bool = _str_to_bool(os.environ.get("INDEXIUM_OCR_ENABLED", "true"))
+    OCR_ENGINE: str = os.environ.get("INDEXIUM_OCR_ENGINE", "auto")
+    _ocr_langs = os.environ.get("INDEXIUM_OCR_LANGS", "en")
+    OCR_LANGUAGES: Tuple[str, ...] = tuple(
+        part.strip() for part in _ocr_langs.split(",") if part.strip()
+    ) or ("en",)
+    OCR_USE_GPU: bool = _str_to_bool(os.environ.get("INDEXIUM_OCR_USE_GPU", "false"))
+    OCR_FRAME_INTERVAL: int = int(os.environ.get("INDEXIUM_OCR_FRAME_INTERVAL", "60"))
+    OCR_MIN_CONFIDENCE: float = float(os.environ.get("INDEXIUM_OCR_MIN_CONFIDENCE", "0.5"))
+    OCR_MIN_TEXT_LENGTH: int = int(os.environ.get("INDEXIUM_OCR_MIN_TEXT_LENGTH", "3"))
+    OCR_MAX_TEXT_LENGTH: int = int(os.environ.get("INDEXIUM_OCR_MAX_TEXT_LENGTH", "80"))
+    OCR_MAX_RESULTS_PER_VIDEO: int = int(os.environ.get("INDEXIUM_OCR_MAX_RESULTS", "200"))

@@ -10,6 +10,7 @@ A Python-based video face scanning and tagging application that automatically de
 - **Parallel Processing**: Multi-core video processing for faster scanning
 - **File Hash-based Tracking**: Tracks videos by content hash, handles moved/renamed files gracefully
 - **Metadata Writing**: Embeds person tags directly into video file metadata
+- **On-Screen Text Capture**: Extracts unique OCR snippets from each video and surfaces them during tagging for quick copy/paste workflows
 - **Face Group Management**: Split groups, merge people, rename, and organize your tags
 - **Remove False Positives**: Delete mistaken face detections directly from the web UI
 - **Progress Tracking**: Visual progress indicators and statistics
@@ -30,6 +31,7 @@ The application provides an intuitive web interface for:
 - Python 3.10 or higher
 - OpenCV dependencies (for video processing)
 - dlib dependencies (for face recognition)
+- EasyOCR requirements (PyTorch + torchvision); installed automatically via pip/uv, but ensure CUDA/cuDNN packages are available if you plan to use GPU OCR
 
 ### Setup
 
@@ -55,11 +57,15 @@ On Ubuntu/Debian:
 ```bash
 sudo apt update
 sudo apt install cmake libopenblas-dev liblapack-dev libx11-dev libgtk-3-dev python3-dev
+# For OCR fallback
+sudo apt install tesseract-ocr
 ```
 
 On macOS:
 ```bash
 brew install cmake
+# For OCR fallback
+brew install tesseract
 ```
 
 ## Usage
@@ -83,6 +89,8 @@ The scanner will:
 - Extract faces from video frames
 - Group similar faces using machine learning
 - Save results to a SQLite database
+- Capture on-screen text snippets (when OCR is enabled) and store them alongside face data for later tagging
+  - If EasyOCR cannot run on your hardware, Indexium automatically falls back to Tesseract (requires the `tesseract` binary)
 
 ### 3. Tag Faces
 
@@ -108,6 +116,22 @@ Once you've tagged faces, write the tags to your video files:
 - Tags are embedded in the video metadata as "People: Name1, Name2, ..."
 - Original files are safely replaced with tagged versions
 
+### 6. Refresh OCR Text (optional)
+
+If you tweak OCR settings or install new language packs, rebuild stored text snippets without touching face data:
+
+```bash
+python scanner.py refresh_ocr            # refresh all completed videos
+python scanner.py refresh_ocr HASH123…   # refresh specific file hashes
+```
+
+If you change filtering rules or want to purge short snippets, run the cleanup pass:
+
+```bash
+python scanner.py cleanup_ocr           # drops OCR text shorter than 4 chars (current default)
+python scanner.py cleanup_ocr 6         # optional custom minimum length
+```
+
 ## Configuration
 
 All configuration is centralized in `config.py`. Values are loaded from
@@ -124,6 +148,14 @@ environment variables with sensible defaults:
 - `NO_FACE_SAMPLE_COUNT`: number of frames to sample per manual-review video (default: 25)
 - `NO_FACE_SAMPLE_DIR`: directory for cached manual-review frame images (default: `thumbnails/no_faces`)
 - `MANUAL_VIDEO_REVIEW_ENABLED`: toggle the manual video tagging workflow (default: `true`)
+- `INDEXIUM_OCR_ENABLED`: toggle OCR extraction during scanning (default: `true` when EasyOCR is installed)
+- `INDEXIUM_OCR_ENGINE`: choose `easyocr`, `tesseract`, or `auto` (default; tries EasyOCR then falls back to Tesseract)
+- `INDEXIUM_OCR_LANGS`: comma-separated EasyOCR language codes (default: `en`)
+- `INDEXIUM_OCR_FRAME_INTERVAL`: frames to skip between OCR samples (default: 60)
+- `INDEXIUM_OCR_MIN_CONFIDENCE`: minimum EasyOCR confidence (0.0–1.0, default: 0.5)
+- `INDEXIUM_OCR_MIN_TEXT_LENGTH`: minimum text length to keep (default: 3)
+- `INDEXIUM_OCR_MAX_TEXT_LENGTH`: maximum text length retained (default: 80)
+- `INDEXIUM_OCR_MAX_RESULTS`: cap of unique OCR strings stored per video (default: 200)
 
 ## Database
 
@@ -131,6 +163,7 @@ The application uses SQLite with these main tables:
 - `scanned_files`: Tracks processed videos by hash, face counts, manual review status, and cached sampling seeds
 - `faces`: Stores face data, locations, encodings, and tags
 - `video_people`: Manual tags that link videos-without-faces to the people who appear in them
+- `video_text`: OCR-derived text snippets keyed by video hash, with confidence and occurrence stats
 
 Database file: `video_faces.db`
 

@@ -235,6 +235,88 @@
                 </div>
             </div>
 
+            {% if ocr_text_aggregated %}
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="card-title text-lg">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20h9M12 4h9M4 8h16M4 16h16"></path>
+                            </svg>
+                            Text Seen In Videos
+                        </h3>
+                        <span class="badge badge-outline">{{ ocr_text_aggregated|length }} unique</span>
+                    </div>
+                    {% if ocr_top_fragments %}
+                    <div>
+                        <h4 class="font-semibold text-sm text-base-content/70 uppercase tracking-wide">Top Substrings</h4>
+                        <div class="flex flex-col gap-2">
+                            {% for fragment in ocr_top_fragments %}
+                            <div class="flex items-start gap-3 rounded-xl bg-base-200/80 p-3">
+                                <div class="flex-1">
+                                    <p class="text-sm font-medium" title="{{ fragment.substring }}">{{ fragment.substring }}</p>
+                                    <p class="text-xs text-base-content/60">Seen {{ fragment.count }} time{{ 's' if fragment.count != 1 else '' }} · {{ fragment.length }} chars</p>
+                                </div>
+                                <button type="button"
+                                        class="btn btn-xs btn-outline copy-snippet"
+                                        data-copy-text="{{ fragment.substring }}"
+                                        title="Copy text">
+                                    Copy
+                                </button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    <details class="collapse collapse-arrow bg-base-200/50">
+                        <summary class="collapse-title text-sm font-semibold">View All Text</summary>
+                        <div class="collapse-content space-y-3">
+                            <div class="flex flex-col gap-2">
+                                {% for entry in ocr_text_aggregated %}
+                                <div class="flex items-start gap-3 rounded-xl bg-base-200/60 p-3">
+                                    <span class="flex-1 text-sm leading-relaxed" title="{{ entry.raw_text }}">{{ entry.raw_text }}</span>
+                                    <div class="flex flex-col items-end gap-1">
+                                        <span class="badge badge-sm badge-outline" title="{{ entry.file_names|join(', ') }}">{{ entry.file_count }} video{{ 's' if entry.file_count != 1 else '' }}</span>
+                                        <button type="button"
+                                                class="btn btn-xs btn-outline copy-snippet"
+                                                data-copy-text="{{ entry.raw_text }}"
+                                                title="Copy text">
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% if ocr_text_by_file %}
+                            <div class="divider text-xs">By video</div>
+                            {% for item in ocr_text_by_file %}
+                            <div class="space-y-2">
+                                <div class="font-semibold text-sm text-base-content/80">{{ item.file_name }}</div>
+                                <div class="flex flex-col gap-2">
+                                    {% for text in item.texts %}
+                                    <div class="flex items-start gap-2 rounded-lg border border-base-200 p-2">
+                                        <span class="flex-1 text-sm" title="{{ text }}">{{ text }}</span>
+                                        <button type="button"
+                                                class="btn btn-xs btn-ghost copy-snippet"
+                                                data-copy-text="{{ text }}"
+                                                title="Copy text">
+                                            Copy
+                                        </button>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                    </details>
+                    {% if ocr_text_by_file %}
+                    <p class="text-xs text-base-content/60">Total snippets stored: {{ ocr_text_aggregated|length }}</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
             <div class="card bg-base-100 shadow-lg">
                 <div class="card-body">
                     <h3 class="card-title text-lg">
@@ -412,6 +494,27 @@
         document.body.appendChild(form);
         form.submit();
     }
+
+    document.querySelectorAll('.copy-snippet').forEach((button) => {
+        const originalLabel = button.textContent;
+        button.addEventListener('click', async () => {
+            const text = button.getAttribute('data-copy-text');
+            if (!text) {
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(text);
+                button.textContent = 'Copied';
+                button.classList.add('btn-success');
+                setTimeout(() => {
+                    button.textContent = originalLabel;
+                    button.classList.remove('btn-success');
+                }, 1500);
+            } catch (err) {
+                console.error('Failed to copy text', err);
+            }
+        });
+    });
 
     document.addEventListener('DOMContentLoaded', function() {
         if (nameInput) {

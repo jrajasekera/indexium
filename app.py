@@ -53,6 +53,65 @@ MANUAL_FINAL_STATUSES = {"done", "no_people"}
 MANUAL_ALL_STATUSES = MANUAL_ACTIVE_STATUSES | MANUAL_FINAL_STATUSES | {"not_required"}
 SAMPLE_MAX_WIDTH = 640
 SAMPLE_MAX_HEIGHT = 360
+MIN_TEXT_FRAGMENT_LENGTH = 4
+
+
+def _calculate_top_text_fragments(entries, max_results=5):
+    """Return the top substrings by frequency and length from OCR text entries."""
+    if not entries:
+        return []
+
+    substring_data: dict[str, dict[str, object]] = {}
+    min_length = MIN_TEXT_FRAGMENT_LENGTH
+
+    for raw_text, weight in entries:
+        if not raw_text:
+            continue
+        weight = max(int(weight or 0), 0)
+        if weight == 0:
+            weight = 1
+
+        normalized = raw_text.lower()
+        if len(normalized) < min_length:
+            continue
+
+        per_string_seen: set[str] = set()
+        for start in range(len(normalized) - min_length + 1):
+            for end in range(start + min_length, len(normalized) + 1):
+                substring_lower = normalized[start:end]
+                if substring_lower in per_string_seen:
+                    continue
+                per_string_seen.add(substring_lower)
+
+                display_slice = raw_text[start:end]
+                info = substring_data.get(substring_lower)
+                if info is None:
+                    info = {
+                        "count": 0,
+                        "length": end - start,
+                        "display": display_slice,
+                    }
+                    substring_data[substring_lower] = info
+
+                info["count"] = int(info["count"]) + weight
+
+    if not substring_data:
+        return []
+
+    ranked = sorted(
+        (
+            {
+                "substring": info["display"],
+                "lower": key,
+                "count": int(info["count"]),
+                "length": int(info["length"]),
+            }
+            for key, info in substring_data.items()
+        ),
+        key=lambda item: (-item["count"], -item["length"], item["lower"]),
+    )
+
+    return ranked[:max_results]
 
 
 def _manual_feature_guard():
@@ -218,7 +277,14 @@ def _get_manual_video_record(conn, file_hash: str):
     """Fetch a manual-review candidate row or abort if missing."""
     row = conn.execute(
         """
-        SELECT file_hash, last_known_filepath, manual_review_status, face_count, sample_seed, last_attempt
+        SELECT file_hash,
+               last_known_filepath,
+               manual_review_status,
+               face_count,
+               sample_seed,
+               last_attempt,
+               ocr_text_count,
+               ocr_last_updated
         FROM scanned_files
         WHERE file_hash = ?
         """,
@@ -454,6 +520,67 @@ def tag_group(cluster_id):
     file_names = [os.path.basename(row['last_known_filepath']) for row in file_rows]
     file_hashes = [row['file_hash'] for row in file_rows]
     files_data = list(zip(file_names, file_hashes))
+    file_name_by_hash = {file_hash: name for name, file_hash in files_data}
+
+    ocr_aggregated = []
+    ocr_by_file = {}
+    ocr_top_fragments = []
+    if file_hashes:
+        placeholders = ','.join('?' for _ in file_hashes)
+        rows = conn.execute(
+            f'''
+                SELECT vt.file_hash, vt.raw_text, vt.occurrence_count
+                FROM video_text vt
+                WHERE vt.file_hash IN ({placeholders})
+            ''',
+            file_hashes,
+        ).fetchall()
+
+        dedup_global = {}
+        weighted_entries = []
+        for row in rows:
+            raw_text = (row['raw_text'] or '').strip()
+            if not raw_text or len(raw_text) < MIN_TEXT_FRAGMENT_LENGTH:
+                continue
+            normalized = raw_text.lower()
+            weight = row['occurrence_count'] or 1
+
+            per_file = ocr_by_file.setdefault(row['file_hash'], [])
+            if all(text.lower() != normalized for text in per_file):
+                per_file.append(raw_text)
+
+            entry = dedup_global.setdefault(normalized, {'raw_text': raw_text, 'file_hashes': set()})
+            entry['raw_text'] = raw_text
+            entry['file_hashes'].add(row['file_hash'])
+            weighted_entries.append((raw_text, weight))
+
+        for file_hash, values in ocr_by_file.items():
+            values.sort(key=lambda text: text.lower())
+
+        ocr_aggregated = []
+        for data in dedup_global.values():
+            file_hash_list = sorted(data['file_hashes'])
+            ocr_aggregated.append(
+                {
+                    'raw_text': data['raw_text'],
+                    'file_hashes': file_hash_list,
+                    'file_count': len(file_hash_list),
+                    'file_names': [file_name_by_hash.get(fh, fh) for fh in file_hash_list],
+                }
+            )
+        ocr_aggregated.sort(key=lambda item: item['raw_text'].lower())
+
+        ocr_top_fragments = _calculate_top_text_fragments(weighted_entries)
+
+    ocr_text_by_file_items = [
+        {
+            'file_hash': file_hash,
+            'file_name': file_name_by_hash.get(file_hash, file_hash),
+            'texts': texts,
+        }
+        for file_hash, texts in ocr_by_file.items()
+    ]
+    ocr_text_by_file_items.sort(key=lambda item: item['file_name'].lower())
 
     if not sample_faces:
         flash(f"Cluster #{cluster_id} no longer exists or is empty.", "error")
@@ -522,6 +649,10 @@ def tag_group(cluster_id):
                            file_names=file_names,
                            file_hashes=file_hashes,
                            files_data=files_data,
+                           file_name_by_hash=file_name_by_hash,
+                           ocr_text_by_file=ocr_text_by_file_items,
+                           ocr_text_aggregated=ocr_aggregated,
+                           ocr_top_fragments=ocr_top_fragments,
                            suggestion_candidates=suggestion_candidates,
                            primary_suggestion=primary_suggestion,
                            cluster_is_unknown=(cluster_id == -1))
@@ -696,6 +827,37 @@ def manual_video_detail(file_hash):
         ).fetchall()
     ]
 
+    text_rows = conn.execute(
+        """
+        SELECT raw_text, confidence, occurrence_count
+        FROM video_text
+        WHERE file_hash = ?
+        ORDER BY LOWER(raw_text)
+        """,
+        (file_hash,),
+    ).fetchall()
+
+    ocr_entries = []
+    seen_texts = set()
+    weighted_entries = []
+    for row in text_rows:
+        raw_text = (row['raw_text'] or '').strip()
+        if not raw_text or len(raw_text) < MIN_TEXT_FRAGMENT_LENGTH:
+            continue
+        normalized = raw_text.lower()
+        if normalized in seen_texts:
+            continue
+        seen_texts.add(normalized)
+        occurrence = row['occurrence_count'] or 1
+        weighted_entries.append((raw_text, occurrence))
+        ocr_entries.append(
+            {
+                'raw_text': raw_text,
+                'confidence': row['confidence'],
+                'occurrence_count': occurrence,
+            }
+        )
+
     known_people = _collect_known_people(conn)
     video_info = {
         'file_hash': file_hash,
@@ -704,6 +866,8 @@ def manual_video_detail(file_hash):
         'status': status,
         'face_count': record['face_count'],
         'tag_count': len(tags),
+        'ocr_text_count': record['ocr_text_count'] or 0,
+        'ocr_last_updated': record['ocr_last_updated'],
         'missing': not (video_path and os.path.exists(video_path)),
     }
 
@@ -715,6 +879,8 @@ def manual_video_detail(file_hash):
         known_people=known_people,
         sample_count=len(sample_files),
         focus_person=focus_person,
+        video_text_entries=ocr_entries,
+        video_text_top_fragments=_calculate_top_text_fragments(weighted_entries),
     )
 
 
