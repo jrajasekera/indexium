@@ -44,7 +44,7 @@ FRAME_SKIP = config.FRAME_SKIP
 CPU_CORES_TO_USE = config.CPU_CORES
 SAVE_CHUNK_SIZE = config.SAVE_CHUNK_SIZE
 OCR_ENABLED = config.OCR_ENABLED
-OCR_ENGINE = (config.OCR_ENGINE or "easyocr").strip().lower()
+OCR_ENGINE = (config.OCR_ENGINE or "auto").strip().lower()
 if OCR_ENGINE not in {"easyocr", "tesseract", "auto"}:
     logger.warning("Unsupported OCR engine '%s'; defaulting to 'auto'.", OCR_ENGINE)
     OCR_ENGINE = "auto"
@@ -59,6 +59,7 @@ TOP_FRAGMENT_COUNT = max(1, config.OCR_TOP_FRAGMENT_COUNT)
 _ocr_reader = None
 _easyocr_worker: Optional[tuple] = None  # (process, request_queue, response_queue)
 ACTIVE_OCR_BACKEND: Optional[str] = None
+_BACKEND_INITIALIZED = False
 
 if not OCR_ENABLED:
     ACTIVE_OCR_BACKEND = 'disabled'
@@ -241,6 +242,7 @@ def _easyocr_request(frame: np.ndarray):
     if worker is None or not worker[0].is_alive():
         if not _start_easyocr_worker():
             ACTIVE_OCR_BACKEND = 'tesseract'
+            _BACKEND_INITIALIZED = True
             return None
         worker = _easyocr_worker
 
@@ -253,6 +255,7 @@ def _easyocr_request(frame: np.ndarray):
         logger.error("EasyOCR worker did not respond in time; falling back to Tesseract.")
         _stop_easyocr_worker()
         ACTIVE_OCR_BACKEND = 'tesseract'
+        _BACKEND_INITIALIZED = True
         return None
     except Exception as exc:  # noqa: BLE001
         logger.error("EasyOCR worker communication error: %s", exc)
@@ -266,6 +269,7 @@ def _easyocr_request(frame: np.ndarray):
     logger.warning("EasyOCR worker error: %s. Falling back to Tesseract.", payload)
     _stop_easyocr_worker()
     ACTIVE_OCR_BACKEND = 'tesseract'
+    _BACKEND_INITIALIZED = True
     return None
 
 
@@ -398,14 +402,16 @@ def cleanup_ocr_text(min_length: Optional[int] = None):
 
 def initialize_ocr_backend():
     """Choose and initialize an OCR backend based on configuration and availability."""
-    global ACTIVE_OCR_BACKEND, OCR_ENABLED
+    global ACTIVE_OCR_BACKEND, OCR_ENABLED, _BACKEND_INITIALIZED
 
-    if not OCR_ENABLED:
+    if _BACKEND_INITIALIZED or not OCR_ENABLED:
         ACTIVE_OCR_BACKEND = 'disabled'
         _stop_easyocr_worker()
+        _BACKEND_INITIALIZED = True
         return
 
     if ACTIVE_OCR_BACKEND and ACTIVE_OCR_BACKEND != 'disabled':
+        _BACKEND_INITIALIZED = True
         return
 
     logger.info("OCR engine preference: %s", OCR_ENGINE)
@@ -426,6 +432,7 @@ def initialize_ocr_backend():
             if _probe_easyocr_support():
                 ACTIVE_OCR_BACKEND = 'easyocr'
                 logger.info("OCR backend set to EasyOCR.")
+                _BACKEND_INITIALIZED = True
                 return
             logger.warning("EasyOCR backend unavailable; trying next option.")
         elif backend == 'tesseract':
@@ -435,12 +442,16 @@ def initialize_ocr_backend():
             ACTIVE_OCR_BACKEND = 'tesseract'
             _stop_easyocr_worker()
             logger.info("OCR backend set to Tesseract (pytesseract).")
+            _BACKEND_INITIALIZED = True
             return
 
     logger.warning("No OCR backend available; disabling OCR feature.")
     OCR_ENABLED = False
     ACTIVE_OCR_BACKEND = 'disabled'
     _stop_easyocr_worker()
+    _BACKEND_INITIALIZED = True
+
+    _BACKEND_INITIALIZED = True
 
 
 def get_ocr_reader():
@@ -493,7 +504,10 @@ def collect_ocr_from_frame(
     if not OCR_ENABLED:
         return
 
-    initialize_ocr_backend()
+    if not _BACKEND_INITIALIZED and not mp.current_process().daemon:
+        initialize_ocr_backend()
+    if not _BACKEND_INITIALIZED:
+        return
     if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, 'disabled'):
         return
 
@@ -651,6 +665,7 @@ def retry_failed_videos():
     """Attempts to reprocess videos that previously failed."""
     logger.info("Starting retry of failed videos...")
     try:
+        initialize_ocr_backend()
         with sqlite3.connect(DATABASE_FILE) as conn:
             cursor = conn.cursor()
             # Get failed videos
@@ -1358,6 +1373,8 @@ def scan_videos_parallel(handler):
 
     # Convert back to (filepath, file_hash) tuples for the worker function
     jobs_to_process = [(filepath, file_hash) for filepath, file_hash, _ in jobs_to_process]
+
+    initialize_ocr_backend()
 
     num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
     print(f"Creating a pool of {num_processes} worker processes. Press Ctrl+C to stop gracefully.")

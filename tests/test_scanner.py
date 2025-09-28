@@ -66,6 +66,8 @@ def test_collect_ocr_from_frame_merges_text(monkeypatch):
     monkeypatch.setattr(scanner_module, 'OCR_MAX_RESULTS_PER_VIDEO', 5, raising=False)
     monkeypatch.setattr(scanner_module, 'initialize_ocr_backend', fake_init, raising=False)
     monkeypatch.setattr(scanner_module, '_easyocr_request', fake_request, raising=False)
+    monkeypatch.setattr(scanner_module, '_BACKEND_INITIALIZED', True, raising=False)
+    monkeypatch.setattr(scanner_module, 'ACTIVE_OCR_BACKEND', 'easyocr', raising=False)
 
     scanner_module.collect_ocr_from_frame(frame, frame_index=30, fps=30.0, aggregator=aggregator)
     scanner_module.collect_ocr_from_frame(frame, frame_index=60, fps=30.0, aggregator=aggregator)

@@ -15,7 +15,7 @@ class Config:
     THUMBNAIL_DIR: str = "thumbnails"
     FRAME_SKIP: int = int(os.environ.get("FRAME_SKIP", "25"))
 
-    _cpu = os.environ.get("CPU_CORES", "4")
+    _cpu = os.environ.get("CPU_CORES", "6")
     CPU_CORES: Optional[int] = None if _cpu is None or _cpu.lower() == "none" else int(_cpu)
 
     SAVE_CHUNK_SIZE: int = int(os.environ.get("SAVE_CHUNK_SIZE", "4"))
