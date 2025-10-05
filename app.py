@@ -5,8 +5,11 @@ import random
 import re
 import secrets
 import sqlite3
+import threading
+import time
 from difflib import SequenceMatcher
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import ffmpeg
 import cv2
@@ -34,6 +37,22 @@ app.secret_key = config.SECRET_KEY
 
 # --- DATABASE & HELPERS ---
 
+_manual_warmup_executor: ThreadPoolExecutor | None = None
+_manual_warmup_inflight: set[str] = set()
+_manual_warmup_lock = threading.Lock()
+
+if config.MANUAL_VIDEO_REVIEW_ENABLED and config.MANUAL_REVIEW_WARMUP_ENABLED:
+    worker_count = max(int(config.MANUAL_REVIEW_WARMUP_WORKERS or 1), 1)
+    _manual_warmup_executor = ThreadPoolExecutor(max_workers=worker_count)
+
+_known_people_cache_lock = threading.Lock()
+_known_people_cache: dict[str, object] = {
+    "timestamp": 0.0,
+    "names": [],
+    "prepared": [],
+    "source": None,
+}
+
 def get_db_connection():
     """Gets a per-request database connection."""
     if "db" not in g:
@@ -56,6 +75,94 @@ MANUAL_ALL_STATUSES = MANUAL_ACTIVE_STATUSES | MANUAL_FINAL_STATUSES | {"not_req
 SAMPLE_MAX_WIDTH = 640
 SAMPLE_MAX_HEIGHT = 360
 MIN_TEXT_FRAGMENT_LENGTH = max(MIN_FRAGMENT_LENGTH, config.OCR_MIN_TEXT_LENGTH)
+
+
+def _load_known_people_cache(conn) -> dict[str, object]:
+    """Return cached known people data, refreshing it if stale."""
+    now = time.monotonic()
+    cache_ttl = max(float(config.MANUAL_KNOWN_PEOPLE_CACHE_SECONDS or 0), 0.0)
+    db_source = str(config.DATABASE_FILE)
+
+    with _known_people_cache_lock:
+        cached_timestamp = float(_known_people_cache["timestamp"])
+        cached_source = _known_people_cache.get("source")
+        if (
+            cached_timestamp
+            and cache_ttl > 0
+            and now - cached_timestamp < cache_ttl
+            and cached_source == db_source
+        ):
+            return _known_people_cache
+
+    names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT person_name FROM faces WHERE person_name IS NOT NULL"
+        ).fetchall()
+    }
+    names.update(
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT person_name FROM video_people"
+        ).fetchall()
+    )
+
+    sorted_names = sorted(names, key=lambda name: name.lower())
+    prepared = []
+    for name in sorted_names:
+        normalized = _normalize_match_text(name)
+        if not normalized or normalized == "unknown":
+            continue
+        prepared.append((name, normalized, normalized.split()))
+
+    refreshed = {
+        "timestamp": now,
+        "names": sorted_names,
+        "prepared": prepared,
+        "source": db_source,
+    }
+
+    with _known_people_cache_lock:
+        _known_people_cache.update(refreshed)
+
+    return _known_people_cache
+
+
+def _invalidate_known_people_cache():
+    """Clear the cached known people data."""
+    with _known_people_cache_lock:
+        _known_people_cache["timestamp"] = 0.0
+        _known_people_cache["names"] = []
+        _known_people_cache["prepared"] = []
+        _known_people_cache["source"] = None
+
+
+def _schedule_manual_video_warmup(next_hash: str | None) -> None:
+    """Start background preloading for the next manual-review video."""
+    if not next_hash or _manual_warmup_executor is None:
+        return
+
+    with _manual_warmup_lock:
+        if next_hash in _manual_warmup_inflight:
+            return
+        _manual_warmup_inflight.add(next_hash)
+
+    def _enqueue():
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(config.DATABASE_FILE)
+            conn.row_factory = sqlite3.Row
+            _get_video_samples(conn, next_hash)
+            _load_known_people_cache(conn)
+        except Exception:  # pragma: no cover - defensive logging
+            app.logger.exception("Failed preloading manual video %s", next_hash)
+        finally:
+            if conn is not None:
+                conn.close()
+            with _manual_warmup_lock:
+                _manual_warmup_inflight.discard(next_hash)
+
+    _manual_warmup_executor.submit(_enqueue)
 
 
 def _manual_feature_guard():
@@ -201,20 +308,9 @@ def _get_video_samples(conn, file_hash: str, regenerate: bool = False) -> tuple[
 
 
 def _collect_known_people(conn) -> list[str]:
-    """Return a sorted list of known people names from faces and manual video tags."""
-    names = {
-        row[0]
-        for row in conn.execute(
-            "SELECT DISTINCT person_name FROM faces WHERE person_name IS NOT NULL"
-        ).fetchall()
-    }
-    names.update(
-        row[0]
-        for row in conn.execute(
-            "SELECT DISTINCT person_name FROM video_people"
-        ).fetchall()
-    )
-    return sorted(names, key=lambda name: name.lower())
+    """Return a sorted list of known people names from cache or database."""
+    cache = _load_known_people_cache(conn)
+    return list(cache["names"])
 
 
 def _normalize_match_text(text: str) -> str:
@@ -237,7 +333,7 @@ def _candidate_windows(tokens: list[str], target_length: int) -> list[str]:
 
 
 def _suggest_manual_person_name(
-    known_people: list[str],
+    prepared_people: list[tuple[str, str, list[str]]],
     candidate_texts: list[tuple[str, str]],
     excluded_names: set[str],
 ) -> tuple[str | None, float | None, str | None]:
@@ -252,7 +348,7 @@ def _suggest_manual_person_name(
         seen_norms.add(normalized)
         prepared_candidates.append((source, normalized, normalized.split()))
 
-    if not prepared_candidates or not known_people:
+    if not prepared_candidates or not prepared_people:
         return None, None, None
 
     excluded_normalized = {_normalize_match_text(name) for name in excluded_names}
@@ -261,12 +357,10 @@ def _suggest_manual_person_name(
     best_score: float = 0.0
     best_source: str | None = None
 
-    for name in known_people:
-        normalized_name = _normalize_match_text(name)
+    for name, normalized_name, name_tokens in prepared_people:
         if not normalized_name or normalized_name == "unknown" or normalized_name in excluded_normalized:
             continue
 
-        name_tokens = normalized_name.split()
         expected_length = len(name_tokens)
 
         for source, candidate_norm, tokens in prepared_candidates:
@@ -794,7 +888,9 @@ def manual_video_dashboard():
     suggested_videos.sort(key=lambda video: (status_order(video['status']), (video['name'] or '').lower(), video['file_hash']))
     other_videos.sort(key=lambda video: (status_order(video['status']), (video['name'] or '').lower(), video['file_hash']))
 
-    known_people = _collect_known_people(conn)
+    known_people_cache = _load_known_people_cache(conn)
+    known_people = list(known_people_cache["names"])
+    prepared_people = list(known_people_cache["prepared"])
 
     return render_template(
         'video_manual_list.html',
@@ -910,7 +1006,9 @@ def manual_video_detail(file_hash):
         for row in fragment_rows
     ]
 
-    known_people = _collect_known_people(conn)
+    known_people_cache = _load_known_people_cache(conn)
+    known_people = list(known_people_cache["names"])
+    prepared_people = list(known_people_cache["prepared"])
     video_info = {
         'file_hash': file_hash,
         'name': os.path.basename(video_path) if video_path else None,
@@ -936,10 +1034,13 @@ def manual_video_detail(file_hash):
         candidate_texts.append(('ocr_fragment', fragment['substring']))
 
     suggestion_name, suggestion_score, suggestion_source = _suggest_manual_person_name(
-        known_people,
+        prepared_people,
         candidate_texts,
         excluded_names=set(tags),
     )
+
+    next_manual_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
+    _schedule_manual_video_warmup(next_manual_hash)
 
     if suggestion_name:
         app.logger.info(
@@ -972,22 +1073,26 @@ def manual_video_add_tags(file_hash):
     conn = get_db_connection()
     _get_manual_video_record(conn, file_hash)
 
+    focus_person = request.form.get('focus_person', '').strip()
+    submit_action = request.form.get('submit_action', 'add')
     submitted_name = request.form.get('person_name', '').strip()
 
     if not submitted_name:
         flash('Provide a name to add.', 'warning')
         redirect_args = {'file_hash': file_hash}
-        focus_person = request.form.get('focus_person', '').strip()
         if focus_person:
             redirect_args['focus_person'] = focus_person
         return redirect(url_for('manual_video_detail', **redirect_args))
 
-    added = []
-    duplicates = []
-    invalid = []
+    added: list[str] = []
+    duplicates: list[str] = []
+    invalid: list[str] = []
+    should_commit = False
+
     name = submitted_name
     if name.lower() == 'unknown':
         invalid.append(name)
+        should_commit = True
     else:
         try:
             conn.execute(
@@ -995,11 +1100,10 @@ def manual_video_add_tags(file_hash):
                 (file_hash, name),
             )
             added.append(name)
+            should_commit = True
         except sqlite3.IntegrityError:
             duplicates.append(name)
-
-    if added or invalid or duplicates:
-        conn.commit()
+            should_commit = True
 
     if added:
         flash(f"Tagged video with: {', '.join(added)}", 'success')
@@ -1008,8 +1112,46 @@ def manual_video_add_tags(file_hash):
     if invalid:
         flash("'Unknown' is reserved. Use the review buttons instead.", 'error')
 
+    mark_done_redirect: str | None = None
+    next_manual_hash: str | None = None
+    mark_done_requested = submit_action == 'add_and_done'
+
+    if mark_done_requested and not invalid:
+        tag_count = conn.execute(
+            'SELECT COUNT(*) as count FROM video_people WHERE file_hash = ?',
+            (file_hash,),
+        ).fetchone()['count']
+        if tag_count == 0:
+            flash('Add at least one person before marking as done, or choose "No people".', 'warning')
+        else:
+            conn.execute(
+                'UPDATE scanned_files SET manual_review_status = ? WHERE file_hash = ?',
+                ('done', file_hash),
+            )
+            should_commit = True
+            flash('Marked video as manually tagged.', 'success')
+
+            next_manual_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
+            if next_manual_hash:
+                redirect_args = {'file_hash': next_manual_hash}
+                if focus_person:
+                    redirect_args['focus_person'] = focus_person
+                mark_done_redirect = url_for('manual_video_detail', **redirect_args)
+            else:
+                flash('Great job! No more videos need manual tagging right now.', 'info')
+                mark_done_redirect = url_for('manual_video_dashboard')
+
+    if should_commit:
+        conn.commit()
+    if added:
+        _invalidate_known_people_cache()
+    if next_manual_hash:
+        _schedule_manual_video_warmup(next_manual_hash)
+
+    if mark_done_redirect:
+        return redirect(mark_done_redirect)
+
     redirect_args = {'file_hash': file_hash}
-    focus_person = request.form.get('focus_person', '').strip()
     if focus_person:
         redirect_args['focus_person'] = focus_person
     return redirect(url_for('manual_video_detail', **redirect_args))
@@ -1036,6 +1178,7 @@ def manual_video_remove_tags(file_hash):
         [(file_hash, name) for name in names],
     )
     conn.commit()
+    _invalidate_known_people_cache()
     flash(f"Removed tags: {', '.join(names)}", 'success')
     redirect_args = {'file_hash': file_hash}
     focus_person = request.form.get('focus_person', '').strip()
@@ -1070,10 +1213,14 @@ def manual_video_update_status(file_hash):
         (status, file_hash),
     )
 
+    cleared_tags = False
     if status == 'no_people':
         conn.execute('DELETE FROM video_people WHERE file_hash = ?', (file_hash,))
+        cleared_tags = True
 
     conn.commit()
+    if cleared_tags:
+        _invalidate_known_people_cache()
 
     if status == 'done':
         flash('Marked video as manually tagged.', 'success')
@@ -1084,6 +1231,7 @@ def manual_video_update_status(file_hash):
 
     next_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
     if next_hash:
+        _schedule_manual_video_warmup(next_hash)
         redirect_args = {'file_hash': next_hash}
         if focus_person:
             redirect_args['focus_person'] = focus_person
