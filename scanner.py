@@ -180,10 +180,11 @@ def _probe_easyocr_support() -> bool:
             "EasyOCR probe process exited with code %s; disabling EasyOCR backend.",
             process.exitcode,
         )
-    return False
+        return False
 
     if status != "ok":
-        logger.error("EasyOCR probe failed: %s", payload)
+        message = payload or "unknown error"
+        logger.error("EasyOCR probe failed: %s", message)
         return False
 
     return True
@@ -519,7 +520,10 @@ def initialize_ocr_backend():
     """Choose and initialize an OCR backend based on configuration and availability."""
     global ACTIVE_OCR_BACKEND, OCR_ENABLED, _BACKEND_INITIALIZED
 
-    if _BACKEND_INITIALIZED or not OCR_ENABLED:
+    if _BACKEND_INITIALIZED:
+        return
+
+    if not OCR_ENABLED:
         ACTIVE_OCR_BACKEND = 'disabled'
         _stop_easyocr_worker()
         _BACKEND_INITIALIZED = True
@@ -564,8 +568,6 @@ def initialize_ocr_backend():
     OCR_ENABLED = False
     ACTIVE_OCR_BACKEND = 'disabled'
     _stop_easyocr_worker()
-    _BACKEND_INITIALIZED = True
-
     _BACKEND_INITIALIZED = True
 
 
