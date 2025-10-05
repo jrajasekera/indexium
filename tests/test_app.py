@@ -140,6 +140,70 @@ def test_delete_selected_faces_route(tmp_path, monkeypatch):
     assert not (thumb_dir / f"{delete_id}.jpg").exists()
 
 
+def test_manual_detail_autofills_exact_match(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    file_hash = 'exact123'
+    video_path = tmp_path / 'Alice Johnson.mp4'
+    video_path.write_bytes(b'')
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count, ocr_text_count) VALUES (?, ?, ?, ?, ?)",
+        (file_hash, str(video_path), 'pending', 0, 0),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        (file_hash, 0, '0,0,0,0', enc, 1, 'Alice Johnson'),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(app_module, '_get_video_samples', lambda *args, **kwargs: ([], str(video_path)))
+
+    with app_module.app.test_client() as client:
+        resp = client.get(f'/videos/manual/{file_hash}')
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+
+    assert 'value="Alice Johnson"' in html
+    assert 'Suggested: Alice Johnson' in html
+
+
+def test_manual_detail_autofills_fuzzy_match_from_ocr(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    file_hash = 'fuzzy123'
+    video_path = tmp_path / 'conference_clip.mp4'
+    video_path.write_bytes(b'')
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count, ocr_text_count) VALUES (?, ?, ?, ?, ?)",
+        (file_hash, str(video_path), 'pending', 0, 1),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        (file_hash, 0, '0,0,0,0', enc, 2, 'Bob Smith'),
+    )
+    conn.execute(
+        "INSERT INTO video_text (file_hash, raw_text, normalized_text, confidence, first_seen_frame, first_seen_timestamp_ms, occurrence_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (file_hash, 'Keynote with Bob Smiht', 'keynote with bob smiht', 0.9, 0, 0.0, 1),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(app_module, '_get_video_samples', lambda *args, **kwargs: ([], str(video_path)))
+
+    with app_module.app.test_client() as client:
+        resp = client.get(f'/videos/manual/{file_hash}')
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+
+    assert 'value="Bob Smith"' in html
+    assert 'Suggested: Bob Smith' in html
+
+
 def test_mark_unknown_route(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)

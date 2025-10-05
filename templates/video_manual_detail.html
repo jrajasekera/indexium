@@ -156,7 +156,7 @@
                                 type="text"
                                 name="person_name"
                                 list="detail-known-people"
-                                value="{{ focus_person }}"
+                                value="{{ focus_person or auto_suggested_person or '' }}"
                                 class="input input-bordered join-item w-full"
                                 placeholder="Start typing a name"
                                 autocomplete="off"
@@ -168,6 +168,9 @@
                             <option value="{{ name }}"></option>
                             {% endfor %}
                         </datalist>
+                        {% if auto_suggested_person and not focus_person %}
+                        <p class="text-xs text-primary/80">Suggested: {{ auto_suggested_person }}{% if auto_suggested_source %} (from {{ auto_suggested_source|replace('_', ' ') }}){% endif %}</p>
+                        {% endif %}
                         <p class="text-xs text-base-content/60">Type a name and press enter or click Add. Existing names appear below; new names will be created.</p>
                     </form>
                 </div>

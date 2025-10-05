@@ -34,6 +34,7 @@ class Config:
         os.path.join(THUMBNAIL_DIR, "no_faces"),
     )
     MANUAL_VIDEO_REVIEW_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_VIDEO_REVIEW_ENABLED", "true"))
+    MANUAL_NAME_SUGGEST_THRESHOLD: float = float(os.environ.get("MANUAL_NAME_SUGGEST_THRESHOLD", "0.82"))
 
     OCR_ENABLED: bool = _str_to_bool(os.environ.get("INDEXIUM_OCR_ENABLED", "true"))
     OCR_ENGINE: str = os.environ.get("INDEXIUM_OCR_ENGINE", "auto")

@@ -5,6 +5,7 @@ import random
 import re
 import secrets
 import sqlite3
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import ffmpeg
@@ -214,6 +215,78 @@ def _collect_known_people(conn) -> list[str]:
         ).fetchall()
     )
     return sorted(names, key=lambda name: name.lower())
+
+
+def _normalize_match_text(text: str) -> str:
+    """Normalize text for loose matching (lowercase, alphanumeric, single spaces)."""
+    lowered = re.sub(r"[^a-z0-9]+", " ", (text or "").lower())
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def _candidate_windows(tokens: list[str], target_length: int) -> list[str]:
+    """Return candidate substrings for matching against known names."""
+    if not tokens:
+        return []
+    windows: set[str] = {" ".join(tokens)}
+    if target_length <= 0:
+        return list(windows)
+    if target_length <= len(tokens):
+        for idx in range(len(tokens) - target_length + 1):
+            windows.add(" ".join(tokens[idx : idx + target_length]))
+    return list(windows)
+
+
+def _suggest_manual_person_name(
+    known_people: list[str],
+    candidate_texts: list[tuple[str, str]],
+    excluded_names: set[str],
+) -> tuple[str | None, float | None, str | None]:
+    """Return the best matching known person based on filename/OCR content."""
+
+    prepared_candidates: list[tuple[str, str, list[str]]] = []
+    seen_norms: set[str] = set()
+    for source, raw_text in candidate_texts:
+        normalized = _normalize_match_text(raw_text)
+        if not normalized or normalized in seen_norms:
+            continue
+        seen_norms.add(normalized)
+        prepared_candidates.append((source, normalized, normalized.split()))
+
+    if not prepared_candidates or not known_people:
+        return None, None, None
+
+    excluded_normalized = {_normalize_match_text(name) for name in excluded_names}
+
+    best_name: str | None = None
+    best_score: float = 0.0
+    best_source: str | None = None
+
+    for name in known_people:
+        normalized_name = _normalize_match_text(name)
+        if not normalized_name or normalized_name == "unknown" or normalized_name in excluded_normalized:
+            continue
+
+        name_tokens = normalized_name.split()
+        expected_length = len(name_tokens)
+
+        for source, candidate_norm, tokens in prepared_candidates:
+            windows = _candidate_windows(tokens, expected_length)
+            for window in windows:
+                if not window:
+                    continue
+                if window == normalized_name:
+                    return name, 1.0, source
+
+                score = SequenceMatcher(None, normalized_name, window).ratio()
+                if score > best_score:
+                    best_name = name
+                    best_score = score
+                    best_source = source
+
+    if best_name and best_score >= config.MANUAL_NAME_SUGGEST_THRESHOLD:
+        return best_name, best_score, best_source
+
+    return None, None, None
 
 
 def _get_manual_video_record(conn, file_hash: str):
@@ -777,6 +850,9 @@ def manual_video_detail(file_hash):
         for path in sample_paths
     ]
 
+    if not video_path:
+        video_path = record['last_known_filepath']
+
     tags = [
         row['person_name']
         for row in conn.execute(
@@ -847,6 +923,33 @@ def manual_video_detail(file_hash):
         'missing': not (video_path and os.path.exists(video_path)),
     }
 
+    candidate_texts: list[tuple[str, str]] = []
+    if video_path:
+        path_obj = Path(video_path)
+        candidate_texts.append(('filename', path_obj.stem))
+        candidate_texts.append(('filename', path_obj.name))
+
+    for entry in ocr_entries:
+        candidate_texts.append(('ocr_text', entry['raw_text']))
+
+    for fragment in video_top_fragments:
+        candidate_texts.append(('ocr_fragment', fragment['substring']))
+
+    suggestion_name, suggestion_score, suggestion_source = _suggest_manual_person_name(
+        known_people,
+        candidate_texts,
+        excluded_names=set(tags),
+    )
+
+    if suggestion_name:
+        app.logger.info(
+            "Auto-suggested '%s' for manual video %s via %s (score %.2f)",
+            suggestion_name,
+            file_hash,
+            suggestion_source or 'fuzzy',
+            suggestion_score or 1.0,
+        )
+
     return render_template(
         'video_manual_detail.html',
         video=video_info,
@@ -857,6 +960,8 @@ def manual_video_detail(file_hash):
         focus_person=focus_person,
         video_text_entries=ocr_entries,
         video_text_top_fragments=video_top_fragments,
+        auto_suggested_person=suggestion_name,
+        auto_suggested_source=suggestion_source,
     )
 
 
