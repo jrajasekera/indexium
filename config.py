@@ -68,7 +68,7 @@ class Config:
     MANUAL_VIDEO_REVIEW_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_VIDEO_REVIEW_ENABLED", "true"))
     MANUAL_NAME_SUGGEST_THRESHOLD: float = float(os.environ.get("MANUAL_NAME_SUGGEST_THRESHOLD", "0.82"))
     MANUAL_REVIEW_WARMUP_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_REVIEW_WARMUP_ENABLED", "true"))
-    MANUAL_REVIEW_WARMUP_WORKERS: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_WORKERS", "8"))
+    MANUAL_REVIEW_WARMUP_WORKERS: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_WORKERS", "4"))
     MANUAL_KNOWN_PEOPLE_CACHE_SECONDS: float = float(
         os.environ.get("MANUAL_KNOWN_PEOPLE_CACHE_SECONDS", "30")
     )
