@@ -1,0 +1,297 @@
+{% extends 'base.html' %}
+{% block title %}Metadata History{% endblock %}
+{% block content %}
+<div id="history-app" class="max-w-7xl mx-auto space-y-6 pb-16">
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <h1 class="text-3xl font-bold text-base-content">Metadata History</h1>
+            <p class="text-base-content/70">Review completed metadata write operations, inspect affected files, and roll back changes if necessary.</p>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body grid gap-4 md:grid-cols-4">
+            <div class="md:col-span-2">
+                <label class="label" for="history-search"><span class="label-text">Search</span></label>
+                <input id="history-search" type="search" class="input input-bordered w-full" placeholder="Search by file hash or path" autocomplete="off">
+            </div>
+            <div>
+                <label class="label" for="history-status"><span class="label-text">Status</span></label>
+                <select id="history-status" class="select select-bordered w-full">
+                    <option value="">All</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="failed">Failed</option>
+                    <option value="rolled_back">Rolled Back</option>
+                </select>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="label" for="history-start"><span class="label-text">From</span></label>
+                    <input id="history-start" type="date" class="input input-bordered w-full">
+                </div>
+                <div>
+                    <label class="label" for="history-end"><span class="label-text">To</span></label>
+                    <input id="history-end" type="date" class="input input-bordered w-full">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body space-y-4" id="history-list">
+            <div class="skeleton h-24 w-full"></div>
+            <div class="skeleton h-24 w-full"></div>
+        </div>
+        <div class="card-actions justify-between px-8 pb-6">
+            <div class="text-sm text-base-content/70" id="history-pagination">&nbsp;</div>
+            <div class="join">
+                <button type="button" class="btn join-item" id="history-prev">Previous</button>
+                <button type="button" class="btn join-item" id="history-next">Next</button>
+            </div>
+        </div>
+    </div>
+
+    <dialog id="history-detail" class="modal">
+        <form method="dialog" class="modal-box max-w-4xl">
+            <h3 class="font-bold text-lg" id="detail-title">Operation Details</h3>
+            <div id="detail-body" class="mt-4 space-y-4">
+                <div class="skeleton h-24 w-full"></div>
+            </div>
+            <div class="modal-action">
+                <button type="submit" class="btn">Close</button>
+            </div>
+        </form>
+        <form method="dialog" class="modal-backdrop">
+            <button>Close</button>
+        </form>
+    </dialog>
+</div>
+
+<script>
+(() => {
+    const container = document.getElementById('history-app');
+    if (!container) return;
+
+    const state = {
+        page: 1,
+        perPage: 20,
+        status: '',
+        search: '',
+        start: '',
+        end: '',
+        operations: [],
+        pagination: null,
+        loading: false,
+    };
+
+    const elements = {
+        list: document.getElementById('history-list'),
+        pagination: document.getElementById('history-pagination'),
+        prev: document.getElementById('history-prev'),
+        next: document.getElementById('history-next'),
+        search: document.getElementById('history-search'),
+        status: document.getElementById('history-status'),
+        start: document.getElementById('history-start'),
+        end: document.getElementById('history-end'),
+        detail: document.getElementById('history-detail'),
+        detailTitle: document.getElementById('detail-title'),
+        detailBody: document.getElementById('detail-body'),
+    };
+
+    function escapeHtml(value) {
+        return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
+    }
+
+    function setLoading(loading) {
+        state.loading = loading;
+        elements.prev.disabled = loading;
+        elements.next.disabled = loading;
+        if (loading) {
+            elements.list.innerHTML = '<div class="skeleton h-24 w-full"></div><div class="skeleton h-24 w-full"></div>';
+        }
+    }
+
+    function describeStatus(status) {
+        return ({
+            completed: 'Completed',
+            failed: 'Failed',
+            cancelled: 'Cancelled',
+            rolled_back: 'Rolled Back',
+            pending: 'Pending',
+            in_progress: 'In Progress',
+            cancelling: 'Cancelling…',
+        }[status] || status).toString();
+    }
+
+    function renderOperations() {
+        if (!state.operations.length) {
+            elements.list.innerHTML = '<p class="text-sm text-base-content/60">No operations found for the selected filters.</p>';
+            return;
+        }
+
+        const fragments = state.operations.map((op) => {
+            const badgeClass = {
+                completed: 'badge-success',
+                failed: 'badge-error',
+                cancelled: 'badge-warning',
+                rolled_back: 'badge-info',
+            }[op.status] || 'badge-outline';
+            const counts = `${op.success_count}/${op.file_count} succeeded`;
+            const started = op.started_at ? new Date(op.started_at).toLocaleString() : '—';
+            const finished = op.completed_at ? new Date(op.completed_at).toLocaleString() : '—';
+            return `
+                <article class="border border-base-200 rounded-2xl p-4 space-y-3">
+                    <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <p class="text-lg font-semibold text-base-content">Operation #${op.id} (${escapeHtml(op.operation_type)})</p>
+                            <p class="text-xs text-base-content/60">Started: ${escapeHtml(started)} · Completed: ${escapeHtml(finished)}</p>
+                            <p class="text-sm text-base-content/70">${escapeHtml(counts)}</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="badge ${badgeClass}">${escapeHtml(describeStatus(op.status))}</span>
+                            <button type="button" class="btn btn-outline btn-sm" data-action="details" data-op="${op.id}">Details</button>
+                            ${op.status === 'completed' ? `<button type="button" class="btn btn-primary btn-sm" data-action="rollback" data-op="${op.id}">Rollback</button>` : ''}
+                        </div>
+                    </div>
+                    ${op.error_message ? `<div class="alert alert-error text-xs">${escapeHtml(op.error_message)}</div>` : ''}
+                </article>
+            `;
+        });
+
+        elements.list.innerHTML = fragments.join('');
+        elements.list.querySelectorAll('[data-action="details"]').forEach((button) => {
+            button.addEventListener('click', () => openDetails(parseInt(button.dataset.op, 10)));
+        });
+        elements.list.querySelectorAll('[data-action="rollback"]').forEach((button) => {
+            button.addEventListener('click', () => triggerRollback(parseInt(button.dataset.op, 10)));
+        });
+    }
+
+    function updatePagination() {
+        if (!state.pagination) {
+            elements.pagination.textContent = '';
+            return;
+        }
+        const { page, total_pages: totalPages, total_items: total } = state.pagination;
+        elements.pagination.textContent = `Page ${page} of ${totalPages} · ${total} operations`;
+        elements.prev.disabled = state.loading || page <= 1;
+        elements.next.disabled = state.loading || page >= totalPages;
+    }
+
+    async function fetchOperations() {
+        setLoading(true);
+        const params = new URLSearchParams({ page: state.page.toString(), per_page: state.perPage.toString() });
+        if (state.status) params.set('status', state.status);
+        if (state.search) params.set('search', state.search);
+        if (state.start) params.set('start_date', state.start);
+        if (state.end) params.set('end_date', state.end);
+
+        try {
+            const response = await fetch(`/api/metadata/history?${params.toString()}`);
+            if (!response.ok) throw new Error('Failed to load history');
+            const data = await response.json();
+            state.operations = data.operations || [];
+            state.pagination = data.pagination;
+            renderOperations();
+            updatePagination();
+        } catch (error) {
+            console.error(error);
+            elements.list.innerHTML = `<div class="alert alert-error">${escapeHtml(error.message)}</div>`;
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function openDetails(operationId) {
+        try {
+            elements.detailBody.innerHTML = '<div class="skeleton h-24 w-full"></div>';
+            elements.detail.showModal();
+            const response = await fetch(`/api/metadata/history/${operationId}`);
+            if (!response.ok) throw new Error('Failed to load operation details');
+            const data = await response.json();
+            elements.detailTitle.textContent = `Operation #${data.operation.id} details`;
+            const items = data.items.map((item) => `
+                <section class="border border-base-200 rounded-xl p-3 space-y-2">
+                    <header class="flex flex-wrap items-center justify-between gap-2">
+                        <p class="font-semibold text-base-content">${escapeHtml(item.file_path || item.file_hash)}</p>
+                        <span class="badge badge-outline">${escapeHtml(item.status)}</span>
+                    </header>
+                    <dl class="grid gap-2 text-sm text-base-content/70 md:grid-cols-2">
+                        <div><dt class="uppercase text-xs">Previous</dt><dd>${escapeHtml(item.previous_comment || '—')}</dd></div>
+                        <div><dt class="uppercase text-xs">New</dt><dd>${escapeHtml(item.new_comment || '—')}</dd></div>
+                        <div><dt class="uppercase text-xs">Tags Added</dt><dd>${escapeHtml((item.tags_added || []).join(', ') || '—')}</dd></div>
+                        <div><dt class="uppercase text-xs">Tags Removed</dt><dd>${escapeHtml((item.tags_removed || []).join(', ') || '—')}</dd></div>
+                    </dl>
+                    ${item.error_message ? `<div class="alert alert-error text-xs">${escapeHtml(item.error_message)}</div>` : ''}
+                </section>
+            `).join('');
+            elements.detailBody.innerHTML = items || '<p class="text-sm text-base-content/60">No files recorded.</p>';
+        } catch (error) {
+            console.error(error);
+            elements.detailBody.innerHTML = `<div class="alert alert-error">${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function triggerRollback(operationId) {
+        if (!confirm('Rollback will restore all files in this operation to their backups. Continue?')) {
+            return;
+        }
+        try {
+            const response = await fetch(`/api/metadata/history/${operationId}/rollback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || 'Rollback failed');
+            }
+            await fetchOperations();
+            alert('Rollback requested. Files with available backups were restored.');
+        } catch (error) {
+            console.error(error);
+            alert(error.message);
+        }
+    }
+
+    elements.prev.addEventListener('click', () => {
+        if (state.pagination && state.pagination.page > 1) {
+            state.page -= 1;
+            fetchOperations();
+        }
+    });
+    elements.next.addEventListener('click', () => {
+        if (!state.pagination) return;
+        if (state.pagination.page < state.pagination.total_pages) {
+            state.page += 1;
+            fetchOperations();
+        }
+    });
+
+    let searchTimer;
+    elements.search.addEventListener('input', (event) => {
+        state.search = event.target.value.trim();
+        state.page = 1;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(fetchOperations, 250);
+    });
+
+    elements.status.addEventListener('change', (event) => {
+        state.status = event.target.value;
+        state.page = 1;
+        fetchOperations();
+    });
+
+    [elements.start, elements.end].forEach((input) => {
+        input.addEventListener('change', () => {
+            state.start = elements.start.value;
+            state.end = elements.end.value;
+            state.page = 1;
+            fetchOperations();
+        });
+    });
+
+    fetchOperations();
+})();
+</script>
+{% endblock %}

@@ -204,6 +204,125 @@ def test_manual_detail_autofills_fuzzy_match_from_ocr(tmp_path, monkeypatch):
     assert 'Suggested: Bob Smith' in html
 
 
+def test_metadata_plan_api_returns_json(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / 'api_video.mp4'
+    video_path.write_text('video')
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ('api1', str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ('api1', 0, '0,0,0,0', enc, 10, 'Dana'),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, 'probe', lambda path: {'format': {'tags': {'comment': 'People: Dana'}}})
+
+    with app_module.app.test_client() as client:
+        resp = client.get('/api/metadata/plan')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['statistics']['total_files'] == 1
+        assert data['items'][0]['file_hash'] == 'api1'
+        assert data['items'][0]['risk_level'] == 'safe'
+        assert data['filters']['file_types'] == ['.mp4']
+        assert data['insights']['total_people'] == 1
+
+
+def test_metadata_plan_edit_endpoint_allows_custom_people(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / 'api_video_edit.mp4'
+    video_path.write_text('video')
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ('api2', str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ('api2', 0, '0,0,0,0', enc, 11, 'Evan'),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, 'probe', lambda path: {'format': {'tags': {'comment': ''}}})
+
+    with app_module.app.test_client() as client:
+        resp = client.post('/api/metadata/plan/api2/edit', json={'result_people': ['Evan', 'Fran']})
+        assert resp.status_code == 200
+        payload = resp.get_json()
+        assert payload['item']['result_people'] == ['Evan', 'Fran']
+        assert set(payload['item']['tags_to_add']) == {'Evan', 'Fran'}
+
+
+def test_metadata_plan_api_supports_filters_and_sort(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video_one = tmp_path / 'sorted_a.mp4'
+    video_one.write_text('video1')
+    video_two = tmp_path / 'sorted_b.mov'
+    video_two.write_text('video2')
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ('s1', str(video_one)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ('s2', str(video_two)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ('s1', 0, '0,0,0,0', enc, 20, 'Gina'),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ('s2', 0, '0,0,0,0', enc, 21, 'Hank'),
+    )
+    conn.commit()
+    conn.close()
+
+    def fake_probe(path):
+        comment_map = {
+            str(video_one): 'People: Gina',
+            str(video_two): '',
+        }
+        return {'format': {'tags': {'comment': comment_map.get(path, '')}}}
+
+    monkeypatch.setattr(app_module.ffmpeg, 'probe', fake_probe)
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            '/api/metadata/plan',
+            json={
+                'filter': {'file_types': ['mp4']},
+                'sort': {'by': 'tag_count', 'direction': 'desc'},
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data['items']) == 1
+        assert data['items'][0]['file_hash'] == 's1'
+
+        resp_missing = client.post(
+            '/api/metadata/plan',
+            json={'filter': {'issue_codes': ['missing_file']}},
+        )
+        assert resp_missing.status_code == 200
+        data_missing = resp_missing.get_json()
+        assert isinstance(data_missing['items'], list)
+
+
 def test_mark_unknown_route(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)
@@ -656,9 +775,10 @@ def test_metadata_preview_lists_pending_updates(tmp_path, monkeypatch):
     with app_module.app.test_client() as client:
         resp = client.get("/metadata_preview")
         assert resp.status_code == 200
-        assert b"Smart Metadata Planner" in resp.data
-        assert str(video_path).encode("utf-8") in resp.data
-        assert b"Alice" in resp.data
+        html = resp.get_data(as_text=True)
+        assert "Smart Metadata Planner" in html
+        assert 'id="planner-app"' in html
+        assert 'data-component="planner-table"' in html
 
 
 def test_write_metadata_respects_selection(tmp_path, monkeypatch):
@@ -691,35 +811,28 @@ def test_write_metadata_respects_selection(tmp_path, monkeypatch):
     conn.close()
 
     monkeypatch.setattr(app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}})
+    class DummyWriter:
+        def __init__(self):
+            self.calls = []
 
-    class DummyStream:
-        def __init__(self, input_path, output_path, kwargs):
-            self.input_path = input_path
-            self.output_path = output_path
-            self.kwargs = kwargs
+        def start_operation(self, items, options, background=True):
+            self.calls.append((items, options, background))
+            return 123
 
-    def fake_input(path):
-        return {"input_path": path}
+        def get_operation_status(self, operation_id):
+            return {'status': 'completed', 'items': []}
 
-    def fake_output(stream, output_path, **kwargs):
-        return DummyStream(stream["input_path"], output_path, kwargs)
+        def pause_operation(self, operation_id):
+            return False
 
-    written_metadata = []
+        def resume_operation(self, operation_id):
+            return False
 
-    def fake_run(stream, overwrite_output=True, quiet=True):
-        Path(stream.output_path).write_text("temp")
-        written_metadata.append((stream.input_path, stream.kwargs.get("metadata")))
+        def cancel_operation(self, operation_id):
+            return False
 
-    def fake_replace(src, dst):
-        src_path = Path(src)
-        dst_path = Path(dst)
-        dst_path.write_text(src_path.read_text())
-        src_path.unlink()
-
-    monkeypatch.setattr(app_module.ffmpeg, "input", fake_input)
-    monkeypatch.setattr(app_module.ffmpeg, "output", fake_output)
-    monkeypatch.setattr(app_module.ffmpeg, "run", fake_run)
-    monkeypatch.setattr(app_module.os, "replace", fake_replace)
+    dummy_writer = DummyWriter()
+    monkeypatch.setattr(app_module, 'metadata_writer', dummy_writer)
 
     with app_module.app.test_client() as client:
         resp = client.post(
@@ -728,9 +841,98 @@ def test_write_metadata_respects_selection(tmp_path, monkeypatch):
             follow_redirects=False,
         )
         assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/metadata_progress?operation_id=123')
 
-    assert len(written_metadata) == 1
-    assert written_metadata[0][0] == str(video_one)
-    assert written_metadata[0][1] == "comment=People: Alice"
-    assert video_one.read_text() == "temp"
-    assert video_two.read_text() == "video2"
+    assert len(dummy_writer.calls) == 1
+    call_items, call_options, background = dummy_writer.calls[0]
+    assert background is True
+    assert len(call_items) == 1
+    assert call_items[0].file_hash == 'h1'
+
+
+def test_write_metadata_requires_selection(tmp_path, monkeypatch):
+    setup_app_db(tmp_path, monkeypatch)
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/write_metadata",
+            data={},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/metadata_preview')
+
+
+def test_metadata_progress_route_handles_missing_operation(tmp_path, monkeypatch):
+    setup_app_db(tmp_path, monkeypatch)
+
+    class DummyWriter:
+        def get_operation_status(self, operation_id):
+            return None
+
+    monkeypatch.setattr(app_module, 'metadata_writer', DummyWriter())
+
+    with app_module.app.test_client() as client:
+        resp = client.get('/metadata_progress?operation_id=999', follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/metadata_preview')
+
+
+def test_metadata_operation_status_endpoint(tmp_path, monkeypatch):
+    setup_app_db(tmp_path, monkeypatch)
+
+    sample_status = {
+        'operation_id': 5,
+        'status': 'in_progress',
+        'file_count': 2,
+        'success_count': 1,
+        'failure_count': 0,
+        'pending_count': 1,
+        'skipped_count': 0,
+        'items': [
+            {
+                'id': 1,
+                'file_hash': 'abc',
+                'file_path': '/tmp/a.mp4',
+                'file_name': 'a.mp4',
+                'status': 'success',
+                'error_message': None,
+                'processed_at': None,
+                'tags_added': ['Alice'],
+                'tags_removed': [],
+            }
+        ],
+    }
+
+    class DummyWriter:
+        def get_operation_status(self, operation_id):
+            if operation_id == 5:
+                return sample_status
+            return None
+
+        def pause_operation(self, operation_id):
+            return True
+
+        def resume_operation(self, operation_id):
+            return True
+
+        def cancel_operation(self, operation_id):
+            return True
+
+    dummy_writer = DummyWriter()
+    monkeypatch.setattr(app_module, 'metadata_writer', dummy_writer)
+
+    with app_module.app.test_client() as client:
+        resp = client.get('/api/metadata/operations/5')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['status'] == 'in_progress'
+        assert data['file_count'] == 2
+
+        resp = client.post('/api/metadata/operations/5/pause')
+        assert resp.status_code == 200
+
+        resp = client.post('/api/metadata/operations/5/resume')
+        assert resp.status_code == 200
+
+        resp = client.post('/api/metadata/operations/5/cancel')
+        assert resp.status_code == 200

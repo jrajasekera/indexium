@@ -16,6 +16,7 @@ import cv2
 from flask import (
     Flask,
     abort,
+    jsonify,
     render_template,
     request,
     redirect,
@@ -28,12 +29,29 @@ from flask import (
 
 from config import Config
 from text_utils import calculate_top_text_fragments, MIN_FRAGMENT_LENGTH
+from metadata_services import MetadataPlanner, MetadataWriter, BackupManager, WriteOptions, PlanItem, HistoryService
 
 config = Config()
 
 app = Flask(__name__)
 # Flask needs a secret key to use flash messages
 app.secret_key = config.SECRET_KEY
+
+_metadata_planner = MetadataPlanner(
+    ffmpeg_module=ffmpeg,
+    database_path=config.DATABASE_FILE,
+    max_workers=config.METADATA_PLAN_WORKERS,
+)
+_backup_manager = BackupManager(ffmpeg_module=ffmpeg)
+metadata_writer = MetadataWriter(
+    database_path=config.DATABASE_FILE,
+    ffmpeg_module=ffmpeg,
+    backup_manager=_backup_manager,
+)
+history_service = HistoryService(
+    database_path=config.DATABASE_FILE,
+    backup_manager=_backup_manager,
+)
 
 # --- DATABASE & HELPERS ---
 
@@ -427,98 +445,231 @@ def _get_next_manual_video(conn, exclude_hash: str | None = None) -> str | None:
     row = conn.execute("\n".join(query), params).fetchone()
     return row['file_hash'] if row else None
 
-def extract_people_from_comment(comment):
-    """Extracts a set of person names from a metadata comment field."""
-    if not comment:
-        return set()
-
-    match = re.search(r"People:\s*(.*)", comment)
-    if not match:
-        return set()
-
-    people_segment = match.group(1)
-    for terminator in ('\n', ';', '|'):
-        if terminator in people_segment:
-            people_segment = people_segment.split(terminator, 1)[0]
-    names = [name.strip() for name in people_segment.split(',') if name.strip()]
-    return set(names)
-
-
 def build_metadata_plan(conn, target_hashes=None):
     """Builds a per-file plan summarizing pending metadata writes."""
-    params = []
-    query = 'SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL'
-    if target_hashes:
-        placeholders = ','.join('?' for _ in target_hashes)
-        query += f' AND file_hash IN ({placeholders})'
-        params.extend(target_hashes)
+    plan = _metadata_planner.generate_plan(
+        conn,
+        file_hashes=target_hashes,
+        include_blocked=True,
+    )
 
-    videos = conn.execute(query, params).fetchall()
+    plan_dicts = []
+    for item in plan.items:
+        plan_dicts.append(
+            {
+                'file_hash': item.file_hash,
+                'path': item.file_path,
+                'name': item.file_name,
+                'file_extension': item.file_extension,
+                'db_people': list(item.db_people),
+                'existing_people': list(item.existing_people),
+                'metadata_only_people': list(item.metadata_only_people),
+                'result_people': list(item.result_people),
+                'tags_to_add': list(item.tags_to_add),
+                'tags_to_remove': list(item.tags_to_remove),
+                'existing_comment': item.existing_comment,
+                'result_comment': item.result_comment,
+                'requires_update': item.requires_update,
+                'can_update': item.can_update,
+                'will_overwrite_comment': item.will_overwrite_comment,
+                'overwrites_custom_comment': item.overwrites_custom_comment,
+                'probe_error': item.probe_error,
+                'risk_level': item.risk_level,
+                'issues': list(item.issues),
+                'issue_codes': list(item.issue_codes),
+                'tag_count': item.tag_count,
+                'new_tag_count': item.new_tag_count,
+                'file_modified_time': item.file_modified_time,
+            }
+        )
 
-    plan = []
-    for video in videos:
-        file_hash = video['file_hash']
-        db_names_rows = conn.execute(
-            'SELECT DISTINCT person_name FROM faces WHERE file_hash = ? AND person_name IS NOT NULL',
-            (file_hash,)
-        ).fetchall()
-        db_people = sorted({row['person_name'] for row in db_names_rows})
+    plan_dicts.sort(key=lambda entry: ((entry['name'] or '').lower(), entry['file_hash']))
+    return plan_dicts
 
-        path_row = conn.execute(
-            'SELECT last_known_filepath FROM scanned_files WHERE file_hash = ?',
-            (file_hash,)
-        ).fetchone()
-        raw_path = path_row['last_known_filepath'] if path_row else None
-        can_update = bool(raw_path and os.path.exists(raw_path))
 
-        existing_comment = None
-        existing_people = set()
-        probe_error = None
+@app.route('/api/metadata/plan', methods=['GET', 'POST'])
+def api_get_metadata_plan():
+    """Return a JSON representation of the metadata plan for the requested files."""
+    conn = get_db_connection()
+    payload = request.get_json(silent=True) or {}
 
-        if can_update:
-            try:
-                probe = ffmpeg.probe(raw_path)
-                existing_comment = probe.get('format', {}).get('tags', {}).get('comment')
-            except ffmpeg.Error as exc:
-                probe_error = exc.stderr.decode('utf8') if getattr(exc, 'stderr', None) else str(exc)
-                existing_comment = ''
+    query_hashes = request.args.getlist('file_hashes')
+    body_hashes = payload.get('file_hashes')
+    if isinstance(body_hashes, str):
+        body_hashes = [body_hashes]
+    if body_hashes:
+        query_hashes.extend(body_hashes)
+    file_hashes = query_hashes or None
 
-        existing_comment_value = (existing_comment or '').strip()
-        if existing_comment_value:
-            existing_people = extract_people_from_comment(existing_comment_value)
+    filters = payload.get('filter') or {}
 
-        result_people = sorted(set(db_people).union(existing_people))
-        if not result_people:
-            continue
+    raw_page = payload.get('page', request.args.get('page', 1))
+    raw_per_page = payload.get('per_page', request.args.get('per_page', 50))
+    try:
+        page = max(1, int(raw_page))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = max(1, int(raw_per_page))
+    except (TypeError, ValueError):
+        per_page = 50
 
-        result_comment = f"People: {', '.join(result_people)}"
-        tags_to_add = sorted(set(db_people) - existing_people)
-        metadata_only_people = sorted(existing_people - set(db_people))
+    sort_payload = payload.get('sort') or {}
+    sort_by = sort_payload.get('by') or request.args.get('sort')
+    sort_dir = sort_payload.get('direction') or request.args.get('direction', 'asc')
 
-        requires_update = existing_comment_value != result_comment or not can_update
-        will_overwrite_comment = bool(existing_comment_value and existing_comment_value != result_comment)
-        overwrites_custom_comment = bool(existing_comment_value and not existing_comment_value.startswith('People:'))
+    plan = _metadata_planner.generate_plan(conn, file_hashes=file_hashes, include_blocked=True)
+    filtered_items = _metadata_planner.filter_items(plan.items, filters)
+    sorted_items = _metadata_planner.sort_items(filtered_items, sort_by=sort_by, direction=sort_dir)
+    total_items = len(filtered_items)
+    start = (page - 1) * per_page
+    end = start + per_page
+    paginated_items = sorted_items[start:end]
 
-        plan.append({
-            'file_hash': file_hash,
-            'path': raw_path,
-            'name': os.path.basename(raw_path) if raw_path else None,
-            'db_people': db_people,
-            'existing_people': sorted(existing_people),
-            'metadata_only_people': metadata_only_people,
-            'result_people': result_people,
-            'tags_to_add': tags_to_add,
-            'existing_comment': existing_comment if existing_comment is not None else None,
-            'result_comment': result_comment,
-            'requires_update': requires_update,
-            'can_update': can_update,
-            'will_overwrite_comment': will_overwrite_comment if existing_comment is not None else None,
-            'overwrites_custom_comment': overwrites_custom_comment if existing_comment is not None else None,
-            'probe_error': probe_error,
-        })
+    response = {
+        'items': [item.to_dict() for item in paginated_items],
+        'statistics': plan.statistics.to_dict(),
+        'categories': {
+            category: [plan_item.file_hash for plan_item in items]
+            for category, items in plan.categories.items()
+        },
+        'pagination': {
+            'page': page,
+            'per_page': per_page,
+            'total_items': total_items,
+            'total_pages': max(1, math.ceil(total_items / per_page)) if per_page else 1,
+        },
+        'insights': {
+            'total_people': sum(len(item.result_people) for item in plan.items),
+            'total_new_tags': sum(len(item.tags_to_add) for item in plan.items),
+            'blocked_files': sum(1 for item in plan.items if not item.can_update),
+        },
+        'filters': {
+            'file_types': sorted({item.file_extension for item in plan.items if item.file_extension}),
+            'issue_codes': sorted({code for item in plan.items for code in item.issue_codes}),
+        },
+        'sort': {
+            'applied': {
+                'by': sort_by or 'alphabetical',
+                'direction': sort_dir.lower(),
+            }
+        },
+    }
+    return jsonify(response)
 
-    plan.sort(key=lambda item: ((item['name'] or '').lower(), item['file_hash']))
-    return plan
+
+@app.route('/api/metadata/plan/<file_hash>/edit', methods=['POST'])
+def api_edit_metadata_plan_item(file_hash):
+    """Simulate editing a plan item by returning an updated representation."""
+    payload = request.get_json(force=True, silent=False) or {}
+    result_people = payload.get('result_people', [])
+    if isinstance(result_people, str):
+        result_people = [result_people]
+    if not isinstance(result_people, (list, tuple)):
+        abort(400, description='result_people must be a list of names')
+
+    conn = get_db_connection()
+    plan = _metadata_planner.generate_plan(conn, file_hashes=[file_hash], include_blocked=True)
+    if not plan.items:
+        abort(404, description='Plan item not found')
+
+    updated_item = _metadata_planner.update_item_with_custom_people(plan.items[0], result_people)
+    return jsonify({'item': updated_item.to_dict()})
+
+
+@app.route('/metadata_progress')
+def metadata_progress():
+    """Render the async metadata write progress dashboard."""
+    try:
+        operation_id = int(request.args.get('operation_id', ''))
+    except ValueError:
+        operation_id = None
+
+    if not operation_id:
+        flash("Metadata operation not found. Start a new write from the planner.", "warning")
+        return redirect(url_for('metadata_preview'))
+
+    status = metadata_writer.get_operation_status(operation_id)
+    if status is None:
+        flash("Metadata operation not found or has already been cleaned up.", "warning")
+        return redirect(url_for('metadata_preview'))
+
+    return render_template('metadata_progress.html', operation_id=operation_id)
+
+
+@app.route('/api/metadata/operations/<int:operation_id>', methods=['GET'])
+def api_get_operation_status(operation_id: int):
+    status = metadata_writer.get_operation_status(operation_id)
+    if status is None:
+        abort(404, description='Operation not found')
+    return jsonify(status)
+
+
+@app.route('/api/metadata/operations/<int:operation_id>/pause', methods=['POST'])
+def api_pause_operation(operation_id: int):
+    if metadata_writer.pause_operation(operation_id):
+        return jsonify({'status': 'paused'})
+    abort(404, description='Operation not found or already finished')
+
+
+@app.route('/api/metadata/operations/<int:operation_id>/resume', methods=['POST'])
+def api_resume_operation(operation_id: int):
+    if metadata_writer.resume_operation(operation_id):
+        return jsonify({'status': 'in_progress'})
+    abort(404, description='Operation not found or already finished')
+
+
+@app.route('/api/metadata/operations/<int:operation_id>/cancel', methods=['POST'])
+def api_cancel_operation(operation_id: int):
+    if metadata_writer.cancel_operation(operation_id):
+        return jsonify({'status': 'cancelling'})
+    abort(404, description='Operation not found or already finished')
+
+
+@app.route('/metadata_history')
+def metadata_history():
+    """Displays metadata operation history and rollback controls."""
+    return render_template('metadata_history.html')
+
+
+@app.route('/api/metadata/history', methods=['GET'])
+def api_get_metadata_history():
+    filters = {
+        'status': request.args.getlist('status') or None,
+        'start_date': request.args.get('start_date'),
+        'end_date': request.args.get('end_date'),
+        'search': request.args.get('search'),
+    }
+    filters = {key: value for key, value in filters.items() if value}
+
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = max(1, int(request.args.get('per_page', 20)))
+    except (TypeError, ValueError):
+        per_page = 20
+
+    data = history_service.get_operations(filters, page=page, per_page=per_page)
+    return jsonify(data)
+
+
+@app.route('/api/metadata/history/<int:operation_id>', methods=['GET'])
+def api_get_metadata_history_details(operation_id: int):
+    details = history_service.get_operation_details(operation_id)
+    if details is None:
+        abort(404, description='Operation not found')
+    return jsonify(details)
+
+
+@app.route('/api/metadata/history/<int:operation_id>/rollback', methods=['POST'])
+def api_rollback_metadata_operation(operation_id: int):
+    try:
+        result = history_service.rollback_operation(operation_id)
+    except ValueError as exc:
+        abort(400, description=str(exc))
+    return jsonify(result)
 
 
 def get_progress_stats():
@@ -1433,91 +1584,61 @@ def skip_cluster(cluster_id):
 
 @app.route('/metadata_preview')
 def metadata_preview():
-    """Displays a planner view of pending metadata writes for review."""
-    conn = get_db_connection()
-    plan = [item for item in build_metadata_plan(conn) if item['requires_update']]
-    ready_items = [item for item in plan if item['can_update']]
-    blocked_items = [item for item in plan if not item['can_update']]
-    return render_template(
-        'metadata_preview.html',
-        ready_items=ready_items,
-        blocked_items=blocked_items,
-    )
+    """Displays the enhanced metadata planner interface."""
+    return render_template('metadata_preview.html')
 
 
 @app.route('/write_metadata', methods=['POST'])
 def write_metadata():
-    """Executes metadata writes for the selected planner items."""
+    """Starts an asynchronous metadata write operation and redirects to progress view."""
     selected_hashes = request.form.getlist('file_hashes')
-    print("Starting intelligent metadata write process...")
-
-    conn = get_db_connection()
-    plan = build_metadata_plan(conn, selected_hashes if selected_hashes else None)
-    plan = [item for item in plan if item['requires_update']]
-
-    if selected_hashes and not plan:
-        flash("No metadata updates were selected for writing.", "info")
+    if not selected_hashes:
+        flash("Select at least one video before starting the write operation.", "warning")
         return redirect(url_for('metadata_preview'))
 
-    ready_items = [item for item in plan if item['can_update']]
-    blocked_items = [item for item in plan if not item['can_update']]
+    conn = get_db_connection()
+    plan = _metadata_planner.generate_plan(conn, file_hashes=selected_hashes, include_blocked=True)
+
+    selected_set = set(selected_hashes)
+    ready_items: list[PlanItem] = []
+    blocked_items: list[PlanItem] = []
+    for item in plan.items:
+        if item.file_hash not in selected_set:
+            continue
+        if not item.requires_update:
+            continue
+        if not item.can_update:
+            blocked_items.append(item)
+            continue
+        ready_items.append(item)
 
     if not ready_items:
         if blocked_items:
             flash(
-                f"No metadata updates were written. {len(blocked_items)} file(s) were unavailable.",
+                f"No metadata updates were started. {len(blocked_items)} file(s) are unavailable.",
                 "warning",
             )
         else:
-            flash("No metadata updates were required.", "info")
+            flash("No metadata updates were required for the selected files.", "info")
         return redirect(url_for('metadata_preview'))
-
-    tagged_count = 0
-    failures = []
-
-    for item in ready_items:
-        video_path = item['path']
-        output_path = None
-        tags_string = ", ".join(item['result_people'])
-        print(f"Processing {video_path} -> Tags: {tags_string}")
-
-        try:
-            input_path = video_path
-            output_path = os.path.join(os.path.dirname(input_path), f".temp_{os.path.basename(input_path)}")
-
-            stream = ffmpeg.input(input_path)
-            stream = ffmpeg.output(stream, output_path, c='copy', metadata=f"comment={item['result_comment']}")
-            ffmpeg.run(stream, overwrite_output=True, quiet=True)
-
-            try:
-                os.replace(output_path, input_path)
-            except Exception:
-                if output_path and os.path.exists(output_path):
-                    os.remove(output_path)
-                raise
-            print("  - Successfully tagged and replaced file.")
-            tagged_count += 1
-        except Exception as exc:
-            print(f"  - FFMPEG WRITE ERROR for file {video_path}: {exc}")
-            if output_path and os.path.exists(output_path):
-                os.remove(output_path)
-            failures.append(item['name'] or item['file_hash'])
-
-    if failures:
-        flash(
-            f"Metadata writing complete. Updated {tagged_count} file(s). Failed: {', '.join(failures)}.",
-            "warning",
-        )
-    else:
-        flash(f"Metadata writing complete. Updated {tagged_count} file(s).", "success")
 
     if blocked_items:
         flash(
-            f"Skipped {len(blocked_items)} file(s) because their paths were unavailable.",
+            f"Skipping {len(blocked_items)} file(s) that are unavailable. They will remain in the planner.",
             "warning",
         )
 
-    return redirect(url_for('metadata_preview'))
+    try:
+        operation_id = metadata_writer.start_operation(ready_items, WriteOptions())
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Unable to start metadata write operation: {exc}", "error")
+        return redirect(url_for('metadata_preview'))
+
+    flash(
+        f"Writing metadata for {len(ready_items)} file(s). You can monitor progress below.",
+        "success",
+    )
+    return redirect(url_for('metadata_progress', operation_id=operation_id))
 
 
 # --- NEW ROUTES FOR REVIEWING/EDITING ---

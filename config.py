@@ -73,6 +73,11 @@ class Config:
         os.environ.get("MANUAL_KNOWN_PEOPLE_CACHE_SECONDS", "30")
     )
 
+    METADATA_PLAN_WORKERS: int = max(
+        1,
+        int(os.environ.get("METADATA_PLAN_WORKERS", "8")),
+    )
+
     OCR_ENABLED: bool = _str_to_bool(os.environ.get("INDEXIUM_OCR_ENABLED", "true"))
     OCR_ENGINE: str = os.environ.get("INDEXIUM_OCR_ENGINE", "auto")
     _ocr_langs = os.environ.get("INDEXIUM_OCR_LANGS", "en")

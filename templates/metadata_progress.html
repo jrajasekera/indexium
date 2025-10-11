@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% block title %}Metadata Write Progress{% endblock %}
+{% block content %}
+<div id="progress-app" class="max-w-6xl mx-auto space-y-6 pb-16" data-operation-id="{{ operation_id }}">
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body">
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-base-content">Metadata Write Progress</h1>
+                    <p class="text-base-content/70">Monitor background metadata writes, pause or cancel if needed, and review detailed results per file.</p>
+                </div>
+                <div class="badge badge-outline">Operation #{{ operation_id }}</div>
+            </div>
+            <div class="mt-6 space-y-4">
+                <div class="flex items-center justify-between text-sm text-base-content/70">
+                    <span id="progress-status-label">Preparing…</span>
+                    <span id="progress-count-label">0 / 0</span>
+                </div>
+                <progress id="progress-bar" class="progress progress-primary w-full" value="0" max="100"></progress>
+                <div class="grid gap-3 md:grid-cols-4" aria-live="polite">
+                    <div class="stat bg-base-200 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase text-base-content/60">Total</div>
+                        <div class="stat-value text-2xl" id="stat-total">0</div>
+                    </div>
+                    <div class="stat bg-success/10 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase text-success">Success</div>
+                        <div class="stat-value text-2xl text-success" id="stat-success">0</div>
+                    </div>
+                    <div class="stat bg-error/10 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase text-error">Failed</div>
+                        <div class="stat-value text-2xl text-error" id="stat-failed">0</div>
+                    </div>
+                    <div class="stat bg-warning/10 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase text-warning">Pending</div>
+                        <div class="stat-value text-2xl text-warning" id="stat-pending">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body flex flex-wrap gap-2" role="group" aria-label="Operation controls">
+            <button type="button" id="btn-refresh" class="btn btn-outline btn-sm">Refresh</button>
+            <button type="button" id="btn-pause" class="btn btn-outline btn-sm">Pause</button>
+            <button type="button" id="btn-resume" class="btn btn-outline btn-sm hidden">Resume</button>
+            <button type="button" id="btn-cancel" class="btn btn-outline btn-sm">Cancel</button>
+            <a href="{{ url_for('metadata_preview') }}" class="btn btn-ghost btn-sm ml-auto">Back to Planner</a>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body space-y-4">
+            <h2 class="text-xl font-semibold text-base-content">Files</h2>
+            <div id="progress-items" class="space-y-3" aria-live="polite">
+                <div class="skeleton h-24 w-full"></div>
+                <div class="skeleton h-24 w-full"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+    const container = document.getElementById('progress-app');
+    if (!container) return;
+    const operationId = parseInt(container.dataset.operationId, 10);
+
+    const elements = {
+        statusLabel: document.getElementById('progress-status-label'),
+        countLabel: document.getElementById('progress-count-label'),
+        bar: document.getElementById('progress-bar'),
+        statTotal: document.getElementById('stat-total'),
+        statSuccess: document.getElementById('stat-success'),
+        statFailed: document.getElementById('stat-failed'),
+        statPending: document.getElementById('stat-pending'),
+        items: document.getElementById('progress-items'),
+        btnRefresh: document.getElementById('btn-refresh'),
+        btnPause: document.getElementById('btn-pause'),
+        btnResume: document.getElementById('btn-resume'),
+        btnCancel: document.getElementById('btn-cancel'),
+    };
+
+    const statusMessages = {
+        pending: 'Waiting to start…',
+        in_progress: 'Writing metadata…',
+        paused: 'Paused',
+        cancelling: 'Cancelling…',
+        cancelled: 'Cancelled',
+        completed: 'Completed',
+        failed: 'Failed',
+    };
+
+    let pollingHandle;
+
+    function escapeHtml(value) {
+        return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
+    }
+
+    function describeStatus(status) {
+        return statusMessages[status] || status;
+    }
+
+    function renderItems(items) {
+        if (!items.length) {
+            elements.items.innerHTML = '<p class="text-sm text-base-content/60">No files have been queued for this operation.</p>';
+            return;
+        }
+
+        const fragments = items.map((item) => {
+            const badgeClass = item.status === 'success'
+                ? 'badge badge-success'
+                : item.status === 'failed'
+                    ? 'badge badge-error'
+                    : item.status === 'skipped'
+                        ? 'badge badge-warning'
+                        : 'badge badge-outline';
+            const errorBlock = item.error_message
+                ? `<div class="alert alert-error text-xs"><span>${escapeHtml(item.error_message)}</span></div>`
+                : '';
+            const processed = item.processed_at ? new Date(item.processed_at).toLocaleString() : '—';
+            const added = item.tags_added && item.tags_added.length
+                ? item.tags_added.map(escapeHtml).join(', ')
+                : '—';
+            return `
+                <article class="border border-base-200 rounded-2xl p-4 space-y-2">
+                    <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <p class="font-semibold text-base-content">${escapeHtml(item.file_name)}</p>
+                            <p class="text-xs text-base-content/60 break-all">${escapeHtml(item.file_path || '')}</p>
+                        </div>
+                        <span class="${badgeClass}">${escapeHtml(item.status)}</span>
+                    </div>
+                    <dl class="grid gap-2 md:grid-cols-3 text-sm text-base-content/70">
+                        <div><dt class="uppercase text-xs">File Hash</dt><dd>${escapeHtml(item.file_hash)}</dd></div>
+                        <div><dt class="uppercase text-xs">Processed</dt><dd>${escapeHtml(processed)}</dd></div>
+                        <div><dt class="uppercase text-xs">Tags Added</dt><dd>${escapeHtml(added)}</dd></div>
+                    </dl>
+                    ${errorBlock}
+                </article>
+            `;
+        });
+
+        elements.items.innerHTML = fragments.join('');
+    }
+
+    async function fetchStatus() {
+        try {
+            const response = await fetch(`/api/metadata/operations/${operationId}`);
+            if (!response.ok) {
+                throw new Error(`Status request failed (${response.status})`);
+            }
+            const data = await response.json();
+            const total = data.file_count || 0;
+            const completed = (data.success_count || 0) + (data.failure_count || 0) + (data.skipped_count || 0);
+            const pct = Math.floor((data.progress || 0) * 100);
+
+            elements.statusLabel.textContent = describeStatus(data.status);
+            elements.countLabel.textContent = `${completed} / ${total}`;
+            elements.bar.value = pct;
+            elements.statTotal.textContent = total;
+            elements.statSuccess.textContent = data.success_count || 0;
+            elements.statFailed.textContent = data.failure_count || 0;
+            elements.statPending.textContent = data.pending_count || 0;
+
+            renderItems(data.items || []);
+
+            const finished = ['completed', 'cancelled', 'failed'].includes(data.status);
+            elements.btnPause.disabled = finished;
+            elements.btnCancel.disabled = finished;
+            elements.btnResume.classList.toggle('hidden', data.status !== 'paused');
+            elements.btnPause.classList.toggle('hidden', data.status === 'paused' || finished);
+
+            if (finished && pollingHandle) {
+                clearInterval(pollingHandle);
+                pollingHandle = null;
+            }
+        } catch (error) {
+            console.error(error);
+            elements.statusLabel.textContent = 'Error loading status';
+        }
+    }
+
+    async function postAction(action) {
+        try {
+            const response = await fetch(`/api/metadata/operations/${operationId}/${action}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || `${action} failed`);
+            }
+            fetchStatus();
+        } catch (error) {
+            console.error(error);
+            alert(error.message);
+        }
+    }
+
+    elements.btnRefresh.addEventListener('click', fetchStatus);
+    elements.btnPause.addEventListener('click', () => postAction('pause'));
+    elements.btnResume.addEventListener('click', () => postAction('resume'));
+    elements.btnCancel.addEventListener('click', () => {
+        if (confirm('Cancel the metadata write operation?')) {
+            postAction('cancel');
+        }
+    });
+
+    fetchStatus();
+    pollingHandle = setInterval(fetchStatus, 1500);
+})();
+</script>
+{% endblock %}

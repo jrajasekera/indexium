@@ -1,179 +1,612 @@
 {% extends 'base.html' %}
-{% block title %}Metadata Planner{% endblock %}
+{% block title %}Smart Metadata Planner{% endblock %}
 {% block content %}
-<div class="max-w-5xl mx-auto space-y-6">
+<div id="planner-app" class="max-w-7xl mx-auto space-y-6 pb-16">
     <div class="card bg-base-100 shadow-lg">
-        <div class="card-body">
-            <h1 class="text-2xl font-bold text-base-content">Smart Metadata Planner</h1>
-            <p class="text-base-content/70">Review the planned metadata changes. Select the files you are ready to update and postpone the rest for later.</p>
+        <div class="card-body" id="planner-summary">
+            <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-base-content">Smart Metadata Planner</h1>
+                    <p class="text-base-content/70">Preview, filter, and fine-tune metadata updates before writing them to your video files.</p>
+                </div>
+                <div class="grid grid-cols-2 gap-4 md:grid-cols-4" aria-live="polite">
+                    <div class="stat bg-base-200 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase tracking-wide text-base-content/60">Total Files</div>
+                        <div class="stat-value text-2xl" id="summary-total">-</div>
+                        <div class="stat-desc text-xs text-base-content/70">Items matching current filters</div>
+                    </div>
+                    <div class="stat bg-success/10 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase tracking-wide text-success">Safe</div>
+                        <div class="stat-value text-2xl text-success" id="summary-safe">-</div>
+                        <div class="stat-desc text-xs text-success/80">No conflicts detected</div>
+                    </div>
+                    <div class="stat bg-warning/10 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase tracking-wide text-warning">Warnings</div>
+                        <div class="stat-value text-2xl text-warning" id="summary-warning">-</div>
+                        <div class="stat-desc text-xs text-warning/80">May overwrite comments</div>
+                    </div>
+                    <div class="stat bg-error/10 rounded-2xl p-4">
+                        <div class="stat-title text-xs uppercase tracking-wide text-error">Blocked</div>
+                        <div class="stat-value text-2xl text-error" id="summary-blocked">-</div>
+                        <div class="stat-desc text-xs text-error/80">Requires attention</div>
+                    </div>
+                </div>
+            </div>
+            <div class="divider"></div>
+            <div class="grid gap-4 md:grid-cols-3" aria-live="polite">
+                <div class="bg-base-200 rounded-xl p-4">
+                    <p class="text-sm text-base-content/60">People tags ready to write</p>
+                    <p class="text-2xl font-semibold" id="summary-new-tags">-</p>
+                </div>
+                <div class="bg-base-200 rounded-xl p-4">
+                    <p class="text-sm text-base-content/60">Selected on this page</p>
+                    <p class="text-2xl font-semibold" id="summary-selected-count">0</p>
+                </div>
+                <div class="bg-base-200 rounded-xl p-4">
+                    <p class="text-sm text-base-content/60">Search & filter scope</p>
+                    <p class="text-2xl font-semibold" id="summary-scope">All files</p>
+                </div>
+            </div>
         </div>
     </div>
 
-    {% if ready_items %}
-    <form method="post" action="{{ url_for('write_metadata') }}" class="space-y-4">
-        <div class="flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-base-content">Ready to update</h2>
-            <div class="flex gap-2">
-                <button type="button" class="btn btn-sm btn-outline" onclick="togglePlannerSelection(true)">Select All</button>
-                <button type="button" class="btn btn-sm btn-outline" onclick="togglePlannerSelection(false)">Select None</button>
-            </div>
-        </div>
-        <div class="space-y-4">
-            {% for item in ready_items %}
-            <label class="block">
-                <input type="checkbox" name="file_hashes" value="{{ item.file_hash }}" class="sr-only planner-checkbox" checked>
-                <div class="card bg-base-100 border border-base-300 shadow-sm transition-all hover:border-primary">
-                    <div class="card-body space-y-3">
-                        <div class="flex items-start justify-between gap-4">
-                            <div>
-                                <p class="text-base font-semibold text-base-content">{{ item.name or 'Unnamed file' }}</p>
-                                {% if item.path %}
-                                <p class="text-xs text-base-content/70 break-all">{{ item.path }}</p>
-                                {% else %}
-                                <p class="text-xs text-error/70">No path recorded in the database.</p>
-                                {% endif %}
-                            </div>
-                            <div class="flex flex-col items-end gap-2">
-                                <span class="badge badge-outline badge-sm">{{ item.file_hash }}</span>
-                                <span class="badge badge-primary badge-outline planner-state">Selected</span>
-                            </div>
-                        </div>
-
-                        <div class="grid gap-3 md:grid-cols-2">
-                            <div class="space-y-2">
-                                <p class="text-xs font-semibold uppercase text-base-content/60">Tags in database</p>
-                                <p class="text-sm text-base-content">{{ item.db_people | join(', ') }}</p>
-                                {% if item.tags_to_add %}
-                                <p class="text-xs text-primary">New tags to add: {{ item.tags_to_add | join(', ') }}</p>
-                                {% else %}
-                                <p class="text-xs text-base-content/60">No new names; metadata will be normalised.</p>
-                                {% endif %}
-                                {% if item.metadata_only_people %}
-                                <p class="text-xs text-base-content/70">Existing metadata also lists: {{ item.metadata_only_people | join(', ') }}</p>
-                                {% endif %}
-                            </div>
-                            <div class="space-y-2">
-                                <p class="text-xs font-semibold uppercase text-base-content/60">Existing comment</p>
-                                {% if item.existing_comment %}
-                                <p class="text-sm text-base-content/80 break-words">{{ item.existing_comment }}</p>
-                                {% else %}
-                                <p class="text-sm text-base-content/60">No current comment.</p>
-                                {% endif %}
-                                <p class="text-xs font-semibold uppercase text-base-content/60 mt-2">Planned comment</p>
-                                <p class="text-sm text-base-content/80 break-words">{{ item.result_comment }}</p>
-                                {% if item.overwrites_custom_comment %}
-                                <div class="alert alert-warning mt-2 py-2 px-3 text-sm">
-                                    <span>Existing non-"People" comment will be replaced.</span>
-                                </div>
-                                {% elif item.will_overwrite_comment %}
-                                <div class="alert alert-warning mt-2 py-2 px-3 text-sm">
-                                    <span>Comment will be updated.</span>
-                                </div>
-                                {% endif %}
-                                {% if item.probe_error %}
-                                <div class="alert alert-error mt-2 py-2 px-3 text-xs">
-                                    <span>ffprobe warning: {{ item.probe_error }}</span>
-                                </div>
-                                {% endif %}
-                            </div>
-                        </div>
+    <div class="card bg-base-100 shadow-lg">
+        <div class="card-body space-y-4">
+            <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div class="w-full lg:max-w-lg">
+                    <label class="label" for="planner-search"><span class="label-text">Search</span></label>
+                    <div class="relative">
+                        <input id="planner-search" type="search" placeholder="Find by filename, person, or hash" class="input input-bordered w-full pr-12" autocomplete="off">
+                        <button type="button" id="planner-clear-search" class="btn btn-ghost btn-xs absolute inset-y-0 right-2 my-auto hidden">Clear</button>
                     </div>
                 </div>
-            </label>
-            {% endfor %}
-        </div>
-        <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="flex items-center gap-2">
-                <span id="planner-selection-count" class="badge badge-primary badge-outline">{{ ready_items | length }} selected</span>
+                <div class="flex flex-wrap gap-2" role="group" aria-label="Risk filters">
+                    <button type="button" class="btn btn-sm btn-outline" data-filter-risk="safe">Safe</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-filter-risk="warning">Warning</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-filter-risk="danger">Danger</button>
+                    <button type="button" class="btn btn-sm btn-outline" data-filter-risk="blocked">Blocked</button>
+                </div>
+                <div class="flex gap-3">
+                    <div>
+                        <label class="label" for="planner-sort"><span class="label-text">Sort by</span></label>
+                        <select id="planner-sort" class="select select-bordered">
+                            <option value="alphabetical:asc">Filename (A → Z)</option>
+                            <option value="alphabetical:desc">Filename (Z → A)</option>
+                            <option value="risk:desc">Risk (High → Low)</option>
+                            <option value="tag_count:desc">Tag Count (High → Low)</option>
+                            <option value="tag_count:asc">Tag Count (Low → High)</option>
+                            <option value="modified:desc">Modified (New → Old)</option>
+                            <option value="modified:asc">Modified (Old → New)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label" for="planner-page-size"><span class="label-text">Per page</span></label>
+                        <select id="planner-page-size" class="select select-bordered">
+                            <option value="20">20</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                </div>
             </div>
-            <div class="flex gap-2">
+            <div class="grid gap-4 md:grid-cols-3" id="planner-advanced-filters">
+                <div>
+                    <label class="label" for="planner-file-type"><span class="label-text">File type</span></label>
+                    <select id="planner-file-type" class="select select-bordered w-full">
+                        <option value="">All types</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="label"><span class="label-text">Tag count</span></label>
+                    <div class="flex items-center gap-2">
+                        <input type="number" min="0" id="planner-tag-min" class="input input-bordered w-full" placeholder="Min">
+                        <span class="text-sm text-base-content/60">to</span>
+                        <input type="number" min="0" id="planner-tag-max" class="input input-bordered w-full" placeholder="Max">
+                    </div>
+                </div>
+                <div>
+                    <span class="label-text">Conflicts</span>
+                    <div id="planner-conflict-options" class="flex flex-wrap gap-2 pt-2">
+                        <p class="text-sm text-base-content/50">Loaded after plan fetch…</p>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2" role="group" aria-label="Bulk selection">
+                <button type="button" class="btn btn-outline btn-sm" data-select-action="all">Select All (page)</button>
+                <button type="button" class="btn btn-outline btn-sm" data-select-action="none">Select None</button>
+                <button type="button" class="btn btn-outline btn-sm" data-select-risk="safe">Select Safe</button>
+                <button type="button" class="btn btn-outline btn-sm" data-select-risk="warning">Select Warnings</button>
+                <button type="button" class="btn btn-outline btn-sm" data-select-risk="danger">Select Danger</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg" data-component="planner-table">
+        <div class="card-body space-y-4" id="planner-list" aria-live="polite">
+            <div class="skeleton h-32 w-full"></div>
+            <div class="skeleton h-32 w-full"></div>
+            <div class="text-center text-base-content/60" id="planner-loading-text">Loading metadata plan…</div>
+        </div>
+        <div class="card-actions justify-between px-8 pb-6">
+            <div class="text-sm text-base-content/70" id="planner-pagination-summary">&nbsp;</div>
+            <div class="join">
+                <button type="button" class="btn join-item" id="planner-prev">Previous</button>
+                <button type="button" class="btn join-item" id="planner-next">Next</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-lg border border-base-200">
+        <div class="card-body flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+                <p class="text-base font-semibold text-base-content">Ready to write</p>
+                <p class="text-sm text-base-content/70">Review your selection one more time, then launch the write operation.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
                 <a href="{{ url_for('index') }}" class="btn btn-ghost">Cancel</a>
-                <button type="submit" class="btn btn-primary">Write Selected Metadata</button>
-            </div>
-        </div>
-    </form>
-    {% endif %}
-
-    {% if not ready_items and not blocked_items %}
-    <div class="card bg-base-100 shadow-lg">
-        <div class="card-body">
-            <p class="text-base-content">No metadata updates are pending right now.</p>
-            <div class="mt-4">
-                <a href="{{ url_for('index') }}" class="btn btn-primary">Back to dashboard</a>
+                <button type="button" id="write-selected-btn" class="btn btn-primary">Write Selected Metadata</button>
             </div>
         </div>
     </div>
-    {% endif %}
 
-    {% if blocked_items %}
-    <div class="card bg-base-100 shadow-lg border border-warning">
-        <div class="card-body space-y-3">
-            <div class="flex items-center gap-2">
-                <svg class="w-5 h-5 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 5c-.77-1.333-2.694-1.333-3.464 0L4.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                </svg>
-                <h2 class="text-lg font-semibold text-warning">Blocked items</h2>
-            </div>
-            <p class="text-sm text-base-content/70">These files need attention before metadata can be written.</p>
-            <div class="space-y-4">
-                {% for item in blocked_items %}
-                <div class="card bg-base-200 border border-base-300">
-                    <div class="card-body space-y-2">
-                        <div class="flex items-start justify-between gap-4">
-                            <div>
-                                <p class="text-sm font-semibold text-base-content">{{ item.name or 'Unnamed file' }}</p>
-                                {% if item.path %}
-                                <p class="text-xs text-base-content/70 break-all">{{ item.path }}</p>
-                                {% else %}
-                                <p class="text-xs text-error/80">No path recorded in the database.</p>
-                                {% endif %}
-                            </div>
-                            <span class="badge badge-outline badge-sm">{{ item.file_hash }}</span>
-                        </div>
-                        <p class="text-xs text-base-content/70">Tags awaiting write: {{ item.result_people | join(', ') }}</p>
-                        <p class="text-xs text-error">File is unavailable; reconnect or rescan before retrying.</p>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-    </div>
-    {% endif %}
+    <form id="metadata-write-form" method="post" action="{{ url_for('write_metadata') }}" class="hidden" aria-hidden="true"></form>
 </div>
 
 <script>
-    const plannerCheckboxes = Array.from(document.querySelectorAll('.planner-checkbox'));
-    const plannerBadges = Array.from(document.querySelectorAll('.planner-state'));
-    const selectionBadge = document.getElementById('planner-selection-count');
+(() => {
+    const state = {
+        page: 1,
+        perPage: 50,
+        filters: {
+            risk_levels: [],
+            file_types: [],
+            tag_count: { min: null, max: null },
+            issue_codes: [],
+            search: '',
+        },
+        sort: { by: 'alphabetical', direction: 'asc' },
+        items: [],
+        statistics: null,
+        pagination: null,
+        insights: null,
+        available: { file_types: [], issue_codes: [] },
+        selected: new Set(),
+        loading: false,
+    };
 
-    function updatePlannerSelectionState() {
-        plannerCheckboxes.forEach((checkbox, index) => {
-            if (!plannerBadges[index]) {
-                return;
-            }
-            plannerBadges[index].textContent = checkbox.checked ? 'Selected' : 'Postponed';
-            plannerBadges[index].classList.toggle('badge-primary', checkbox.checked);
-            plannerBadges[index].classList.toggle('badge-ghost', !checkbox.checked);
+    const elements = {
+        search: document.getElementById('planner-search'),
+        clearSearch: document.getElementById('planner-clear-search'),
+        riskButtons: Array.from(document.querySelectorAll('[data-filter-risk]')),
+        sortSelect: document.getElementById('planner-sort'),
+        pageSize: document.getElementById('planner-page-size'),
+        fileType: document.getElementById('planner-file-type'),
+        tagMin: document.getElementById('planner-tag-min'),
+        tagMax: document.getElementById('planner-tag-max'),
+        conflictOptions: document.getElementById('planner-conflict-options'),
+        selectionButtons: Array.from(document.querySelectorAll('[data-select-action], [data-select-risk]')),
+        list: document.getElementById('planner-list'),
+        paginationSummary: document.getElementById('planner-pagination-summary'),
+        prev: document.getElementById('planner-prev'),
+        next: document.getElementById('planner-next'),
+        summaryTotal: document.getElementById('summary-total'),
+        summarySafe: document.getElementById('summary-safe'),
+        summaryWarning: document.getElementById('summary-warning'),
+        summaryBlocked: document.getElementById('summary-blocked'),
+        summaryNewTags: document.getElementById('summary-new-tags'),
+        summarySelected: document.getElementById('summary-selected-count'),
+        summaryScope: document.getElementById('summary-scope'),
+        loadingText: document.getElementById('planner-loading-text'),
+        writeButton: document.getElementById('write-selected-btn'),
+        writeForm: document.getElementById('metadata-write-form'),
+    };
+
+    const riskLabels = {
+        safe: { title: 'Safe', badge: 'badge-success' },
+        warning: { title: 'Warning', badge: 'badge-warning' },
+        danger: { title: 'Danger', badge: 'badge-error' },
+        blocked: { title: 'Blocked', badge: 'badge-error' },
+    };
+
+    function escapeHtml(value) {
+        return value.replace(/[&<>"']/g, (char) => {
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+            return map[char] || char;
         });
-        if (selectionBadge) {
-            const selectedCount = plannerCheckboxes.filter((checkbox) => checkbox.checked).length;
-            selectionBadge.textContent = `${selectedCount} selected`;
+    }
+
+    function setLoading(loading) {
+        state.loading = loading;
+        if (loading) {
+            elements.list.innerHTML = '<div class="skeleton h-32 w-full"></div><div class="skeleton h-32 w-full"></div>';
+            elements.loadingText.classList.remove('hidden');
+            elements.loadingText.textContent = 'Loading metadata plan…';
+        } else {
+            elements.loadingText.classList.add('hidden');
+        }
+        elements.prev.disabled = loading;
+        elements.next.disabled = loading;
+    }
+
+    function updateSummary() {
+        const stats = state.statistics;
+        const insights = state.insights;
+        if (!stats || !insights) {
+            elements.summaryTotal.textContent = '-';
+            elements.summarySafe.textContent = '-';
+            elements.summaryWarning.textContent = '-';
+            elements.summaryBlocked.textContent = '-';
+            elements.summaryNewTags.textContent = '-';
+            return;
+        }
+        elements.summaryTotal.textContent = stats.total_files;
+        elements.summarySafe.textContent = stats.safe_count;
+        elements.summaryWarning.textContent = stats.warning_count;
+        elements.summaryBlocked.textContent = stats.blocked_count;
+        elements.summaryNewTags.textContent = insights.total_new_tags;
+        elements.summarySelected.textContent = state.selected.size;
+        const scopeParts = [];
+        if (state.filters.search) {
+            scopeParts.push(`Search: "${state.filters.search}"`);
+        }
+        if (state.filters.risk_levels.length) {
+            scopeParts.push(`Risk: ${state.filters.risk_levels.join(', ')}`);
+        }
+        if (state.filters.file_types.length) {
+            scopeParts.push(`Type: ${state.filters.file_types.join(', ')}`);
+        }
+        if (state.filters.issue_codes.length) {
+            scopeParts.push(`Conflicts: ${state.filters.issue_codes.join(', ')}`);
+        }
+        if (state.filters.tag_count.min !== null || state.filters.tag_count.max !== null) {
+            const min = state.filters.tag_count.min ?? 'any';
+            const max = state.filters.tag_count.max ?? 'any';
+            scopeParts.push(`Tags: ${min} – ${max}`);
+        }
+        elements.summaryScope.textContent = scopeParts.length ? scopeParts.join(' · ') : 'All files';
+    }
+
+    function updatePagination() {
+        const page = state.pagination?.page || state.page;
+        const totalPages = state.pagination?.total_pages || 1;
+        elements.paginationSummary.textContent = `Page ${page} of ${totalPages}`;
+        elements.prev.disabled = state.loading || page <= 1;
+        elements.next.disabled = state.loading || page >= totalPages;
+    }
+
+    function renderConflictOptions() {
+        const container = elements.conflictOptions;
+        container.innerHTML = '';
+        if (!state.available.issue_codes.length) {
+            container.innerHTML = '<p class="text-sm text-base-content/50">No conflicts detected.</p>';
+            return;
+        }
+        state.available.issue_codes.forEach((code) => {
+            const label = document.createElement('label');
+            label.className = 'badge badge-outline gap-2 cursor-pointer';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = code;
+            input.className = 'checkbox checkbox-xs';
+            input.checked = state.filters.issue_codes.includes(code);
+            input.addEventListener('change', () => {
+                if (input.checked) {
+                    if (!state.filters.issue_codes.includes(code)) {
+                        state.filters.issue_codes.push(code);
+                    }
+                } else {
+                    state.filters.issue_codes = state.filters.issue_codes.filter((c) => c !== code);
+                }
+                state.page = 1;
+                fetchPlan();
+            });
+            const span = document.createElement('span');
+            span.textContent = code.replace(/_/g, ' ');
+            label.appendChild(input);
+            label.appendChild(span);
+            container.appendChild(label);
+        });
+    }
+
+    function renderFileTypeOptions() {
+        const select = elements.fileType;
+        const previous = select.value;
+        select.innerHTML = '<option value="">All types</option>';
+        state.available.file_types.forEach((type) => {
+            const option = document.createElement('option');
+            option.value = type;
+            option.textContent = type;
+            select.appendChild(option);
+        });
+        if (previous && state.available.file_types.includes(previous)) {
+            select.value = previous;
         }
     }
 
-    function togglePlannerSelection(selectAll) {
-        plannerCheckboxes.forEach((checkbox) => {
-            checkbox.checked = !!selectAll;
+    function renderList() {
+        const readyItems = state.items.filter((item) => item.can_update);
+        const blockedItems = state.items.filter((item) => !item.can_update);
+        if (!state.items.length) {
+            elements.list.innerHTML = `
+                <div class="flex flex-col items-center gap-4 py-12 text-center">
+                    <svg class="w-12 h-12 text-base-content/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m9 1V7a2 2 0 00-2-2h-3.28a2 2 0 01-1.789-1.106l-.447-.894A2 2 0 0012.894 2H11.1a2 2 0 00-1.789 1.106l-.447.894A2 2 0 007.075 5H3a2 2 0 00-2 2v12a2 2 0 002 2h18a2 2 0 002-2z" />
+                    </svg>
+                    <div>
+                        <p class="text-lg font-semibold">No results match your filters yet</p>
+                        <p class="text-sm text-base-content/70">Try adjusting the risk filters or clearing the search query.</p>
+                    </div>
+                </div>`;
+            return;
+        }
+
+        const fragments = [];
+
+        readyItems.forEach((item) => {
+            const selected = state.selected.has(item.file_hash);
+            const risk = riskLabels[item.risk_level] || riskLabels.safe;
+            const added = item.tags_to_add.length ? item.tags_to_add.map(escapeHtml).join(', ') : 'No new tags';
+            const existing = item.existing_comment ? escapeHtml(item.existing_comment) : '<span class="text-base-content/60">No current comment</span>';
+            const issues = item.issues.length ? item.issues.map(escapeHtml).join(' • ') : 'Ready to write';
+            const metadataOnly = item.metadata_only_people.length ? `Existing metadata also lists: ${item.metadata_only_people.map(escapeHtml).join(', ')}` : '';
+            fragments.push(`
+                <article class="border border-base-200 rounded-2xl p-5 space-y-4 shadow-sm transition hover:border-primary" data-file-hash="${item.file_hash}">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div class="flex items-start gap-3">
+                            <input type="checkbox" class="checkbox checkbox-primary mt-1" data-select-item="${item.file_hash}" ${selected ? 'checked' : ''} ${item.can_update ? '' : 'disabled'}>
+                            <div>
+                                <p class="text-lg font-semibold text-base-content">${escapeHtml(item.name || item.file_hash)}</p>
+                                <p class="text-xs text-base-content/60 break-all">${escapeHtml(item.path || 'Path unavailable')}</p>
+                                <p class="text-xs text-base-content/70">${item.tag_count} tag${item.tag_count === 1 ? '' : 's'} planned</p>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end gap-2">
+                            <span class="badge ${risk.badge}">${risk.title}</span>
+                            <span class="badge badge-outline badge-sm">${escapeHtml(item.file_hash)}</span>
+                        </div>
+                    </div>
+                    <div class="grid gap-4 md:grid-cols-2">
+                        <div class="space-y-3">
+                            <div>
+                                <p class="text-xs uppercase text-base-content/50 font-semibold">Database tags</p>
+                                <p class="text-sm">${item.db_people.length ? item.db_people.map(escapeHtml).join(', ') : 'None'}</p>
+                            </div>
+                            <div>
+                                <p class="text-xs uppercase text-base-content/50 font-semibold">New tags</p>
+                                <p class="text-sm text-success">${added}</p>
+                            </div>
+                            ${metadataOnly ? `<p class="text-xs text-base-content/60">${metadataOnly}</p>` : ''}
+                        </div>
+                        <div class="space-y-3">
+                            <div>
+                                <p class="text-xs uppercase text-base-content/50 font-semibold">Existing comment</p>
+                                <p class="text-sm">${existing}</p>
+                            </div>
+                            <div>
+                                <p class="text-xs uppercase text-base-content/50 font-semibold">Planned comment</p>
+                                <p class="text-sm">${escapeHtml(item.result_comment)}</p>
+                            </div>
+                            <div class="alert alert-info text-xs py-2" role="status">${issues}</div>
+                        </div>
+                    </div>
+                </article>
+            `);
         });
-        updatePlannerSelectionState();
+
+        if (blockedItems.length) {
+            fragments.push('<div class="divider">Blocked on this page</div>');
+            blockedItems.forEach((item) => {
+                const issues = item.issues.length ? item.issues.map(escapeHtml).join(' • ') : 'Unavailable';
+                fragments.push(`
+                    <article class="border border-error/40 bg-error/10 rounded-2xl p-5 space-y-3">
+                        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <div>
+                                <p class="text-lg font-semibold text-base-content">${escapeHtml(item.name || item.file_hash)}</p>
+                                <p class="text-xs text-base-content/60 break-all">${escapeHtml(item.path || 'Path unavailable')}</p>
+                            </div>
+                            <span class="badge badge-error">Blocked</span>
+                        </div>
+                        <p class="text-sm text-base-content/80">${issues}</p>
+                    </article>
+                `);
+            });
+        }
+
+        elements.list.innerHTML = fragments.join('');
+
+        elements.list.querySelectorAll('[data-select-item]').forEach((checkboxEl) => {
+            checkboxEl.addEventListener('change', (event) => {
+                const hash = checkboxEl.getAttribute('data-select-item');
+                if (event.target.checked) {
+                    state.selected.add(hash);
+                } else {
+                    state.selected.delete(hash);
+                }
+                updateSummary();
+            });
+        });
     }
 
-    plannerCheckboxes.forEach((checkbox) => {
-        checkbox.addEventListener('change', updatePlannerSelectionState);
+    async function fetchPlan() {
+        if (state.loading) return;
+        setLoading(true);
+        const body = {
+            page: state.page,
+            per_page: state.perPage,
+            filter: {
+                search: state.filters.search,
+                risk_levels: state.filters.risk_levels,
+                file_types: state.filters.file_types,
+                tag_count: {
+                    min: state.filters.tag_count.min,
+                    max: state.filters.tag_count.max,
+                },
+                issue_codes: state.filters.issue_codes,
+            },
+            sort: state.sort,
+        };
+        if (body.filter.tag_count.min === null || Number.isNaN(body.filter.tag_count.min)) {
+            body.filter.tag_count.min = null;
+        }
+        if (body.filter.tag_count.max === null || Number.isNaN(body.filter.tag_count.max)) {
+            body.filter.tag_count.max = null;
+        }
+
+        try {
+            const response = await fetch('/api/metadata/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!response.ok) {
+                throw new Error(`Planner API returned ${response.status}`);
+            }
+            const data = await response.json();
+            state.items = data.items || [];
+            state.statistics = data.statistics;
+            state.pagination = data.pagination;
+            state.insights = data.insights;
+            state.available.file_types = data.filters.file_types || [];
+            state.available.issue_codes = data.filters.issue_codes || [];
+            if (state.selected.size === 0) {
+                state.items
+                    .filter((item) => item.can_update && item.requires_update !== false)
+                    .forEach((item) => state.selected.add(item.file_hash));
+            }
+            renderFileTypeOptions();
+            renderConflictOptions();
+            renderList();
+            updateSummary();
+            updatePagination();
+        } catch (error) {
+            console.error(error);
+            elements.list.innerHTML = `<div class="alert alert-error">${escapeHtml(error.message)}</div>`;
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    let searchTimer;
+    elements.search.addEventListener('input', (event) => {
+        const value = event.target.value.trim();
+        state.filters.search = value;
+        elements.clearSearch.classList.toggle('hidden', !value);
+        state.page = 1;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(fetchPlan, 250);
     });
 
-    updatePlannerSelectionState();
+    elements.clearSearch.addEventListener('click', () => {
+        elements.search.value = '';
+        elements.clearSearch.classList.add('hidden');
+        if (state.filters.search) {
+            state.filters.search = '';
+            state.page = 1;
+            fetchPlan();
+        }
+    });
 
-    window.togglePlannerSelection = togglePlannerSelection;
+    elements.riskButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const risk = button.dataset.filterRisk;
+            const active = state.filters.risk_levels.includes(risk);
+            if (active) {
+                state.filters.risk_levels = state.filters.risk_levels.filter((r) => r !== risk);
+                button.classList.remove('btn-active');
+            } else {
+                state.filters.risk_levels.push(risk);
+                button.classList.add('btn-active');
+            }
+            state.page = 1;
+            fetchPlan();
+        });
+    });
+
+    elements.sortSelect.addEventListener('change', (event) => {
+        const [by, direction] = event.target.value.split(':');
+        state.sort = { by: by === 'alphabetical' ? null : by, direction };
+        if (!state.sort.by) {
+            state.sort.by = 'alphabetical';
+        }
+        state.page = 1;
+        fetchPlan();
+    });
+
+    elements.pageSize.addEventListener('change', (event) => {
+        state.perPage = parseInt(event.target.value, 10) || 50;
+        state.page = 1;
+        fetchPlan();
+    });
+
+    elements.fileType.addEventListener('change', (event) => {
+        const value = event.target.value;
+        state.filters.file_types = value ? [value] : [];
+        state.page = 1;
+        fetchPlan();
+    });
+
+    [elements.tagMin, elements.tagMax].forEach((input) => {
+        input.addEventListener('change', () => {
+            const min = elements.tagMin.value ? parseInt(elements.tagMin.value, 10) : null;
+            const max = elements.tagMax.value ? parseInt(elements.tagMax.value, 10) : null;
+            state.filters.tag_count = { min, max };
+            state.page = 1;
+            fetchPlan();
+        });
+    });
+
+    elements.selectionButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.dataset.selectAction;
+            const risk = button.dataset.selectRisk;
+            const visibleHashes = state.items
+                .filter((item) => item.can_update)
+                .filter((item) => !risk || item.risk_level === risk)
+                .map((item) => item.file_hash);
+            if (action === 'all') {
+                visibleHashes.forEach((hash) => state.selected.add(hash));
+            } else if (action === 'none') {
+                visibleHashes.forEach((hash) => state.selected.delete(hash));
+            } else if (risk) {
+                visibleHashes.forEach((hash) => state.selected.add(hash));
+            }
+            renderList();
+            updateSummary();
+        });
+    });
+
+    elements.prev.addEventListener('click', () => {
+        if (state.page > 1) {
+            state.page -= 1;
+            fetchPlan();
+        }
+    });
+
+    elements.next.addEventListener('click', () => {
+        const totalPages = state.pagination?.total_pages || 1;
+        if (state.page < totalPages) {
+            state.page += 1;
+            fetchPlan();
+        }
+    });
+
+    elements.writeButton.addEventListener('click', () => {
+        if (!state.selected.size) {
+            window.alert('Select at least one file before writing metadata.');
+            return;
+        }
+        elements.writeForm.innerHTML = '';
+        state.selected.forEach((hash) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'file_hashes';
+            input.value = hash;
+            elements.writeForm.appendChild(input);
+        });
+        elements.writeForm.submit();
+    });
+
+    fetchPlan();
+})();
 </script>
 {% endblock %}

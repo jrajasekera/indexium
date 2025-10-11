@@ -1069,6 +1069,83 @@ def setup_database():
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_video_people_file_hash ON video_people (file_hash)')
 
+        # Metadata operations tables for smart metadata planner
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata_operations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                file_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                user_note TEXT
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_operations_status ON metadata_operations (status)'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_operations_started ON metadata_operations (started_at DESC)'
+        )
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata_operation_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_id INTEGER NOT NULL,
+                file_hash TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                previous_comment TEXT,
+                new_comment TEXT NOT NULL,
+                tags_added TEXT,
+                tags_removed TEXT,
+                error_message TEXT,
+                processed_at TIMESTAMP,
+                FOREIGN KEY (operation_id) REFERENCES metadata_operations (id) ON DELETE CASCADE,
+                FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata_comment_cache (
+                file_hash TEXT PRIMARY KEY,
+                comment TEXT,
+                file_mtime REAL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_items_operation ON metadata_operation_items (operation_id)'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_items_status ON metadata_operation_items (status)'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_items_file ON metadata_operation_items (file_hash)'
+        )
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS metadata_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_item_id INTEGER NOT NULL,
+                file_hash TEXT NOT NULL,
+                backup_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                original_comment TEXT,
+                original_metadata_json TEXT,
+                FOREIGN KEY (operation_item_id) REFERENCES metadata_operation_items (id) ON DELETE CASCADE,
+                FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_history_file ON metadata_history (file_hash)'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metadata_history_operation ON metadata_history (operation_item_id)'
+        )
+
         # Backfill counts and manual review status for legacy records
         cursor.execute(
             '''
