@@ -510,11 +510,12 @@ class MetadataPlanner:
         tags_to_remove = sorted(set(existing_people) - set(result_people), key=str.lower)
         result_comment = f"People: {', '.join(result_people)}" if result_people else ""
 
+        existing_comment_value = (existing_comment or "").strip()
         will_overwrite_comment = (
             can_update
-            and (existing_comment or "").strip() != result_comment
+            and bool(existing_comment_value)
+            and existing_comment_value != result_comment
         )
-        existing_comment_value = (existing_comment or "").strip()
         overwrites_custom_comment = bool(
             can_update
             and existing_comment_value

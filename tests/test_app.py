@@ -781,6 +781,68 @@ def test_metadata_preview_lists_pending_updates(tmp_path, monkeypatch):
         assert 'data-component="planner-table"' in html
 
 
+def test_metadata_plan_api_includes_filenames(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / "video1.mp4"
+    video_path.write_text("video1")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}})
+
+    with app_module.app.test_client() as client:
+        resp = client.post("/api/metadata/plan", json={"page": 1, "per_page": 10})
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+    assert data["items"], "planner API should return at least one item"
+    item = data["items"][0]
+    assert item["name"] == "video1.mp4"
+    assert item["path"] == str(video_path)
+
+
+def test_metadata_plan_does_not_warn_when_comment_empty(tmp_path, monkeypatch):
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / "video1.mp4"
+    video_path.write_text("video1")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}})
+
+    with app_module.app.test_client() as client:
+        resp = client.post("/api/metadata/plan", json={"page": 1, "per_page": 10})
+        assert resp.status_code == 200
+        data = resp.get_json()
+
+    item = data["items"][0]
+    assert item["risk_level"] == "safe"
+    assert not item["will_overwrite_comment"]
+    assert "Will replace existing metadata comment" not in item["issues"]
+
+
 def test_write_metadata_respects_selection(tmp_path, monkeypatch):
     db_path = setup_app_db(tmp_path, monkeypatch)
     conn = sqlite3.connect(db_path)

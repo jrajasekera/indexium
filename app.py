@@ -445,6 +445,14 @@ def _get_next_manual_video(conn, exclude_hash: str | None = None) -> str | None:
     row = conn.execute("\n".join(query), params).fetchone()
     return row['file_hash'] if row else None
 
+def _serialize_plan_item(item: PlanItem) -> dict[str, object]:
+    """Convert a plan item to the dict shape expected by the planner UI."""
+    data = item.to_dict()
+    data['name'] = item.file_name
+    data['path'] = item.file_path
+    return data
+
+
 def build_metadata_plan(conn, target_hashes=None):
     """Builds a per-file plan summarizing pending metadata writes."""
     plan = _metadata_planner.generate_plan(
@@ -453,35 +461,7 @@ def build_metadata_plan(conn, target_hashes=None):
         include_blocked=True,
     )
 
-    plan_dicts = []
-    for item in plan.items:
-        plan_dicts.append(
-            {
-                'file_hash': item.file_hash,
-                'path': item.file_path,
-                'name': item.file_name,
-                'file_extension': item.file_extension,
-                'db_people': list(item.db_people),
-                'existing_people': list(item.existing_people),
-                'metadata_only_people': list(item.metadata_only_people),
-                'result_people': list(item.result_people),
-                'tags_to_add': list(item.tags_to_add),
-                'tags_to_remove': list(item.tags_to_remove),
-                'existing_comment': item.existing_comment,
-                'result_comment': item.result_comment,
-                'requires_update': item.requires_update,
-                'can_update': item.can_update,
-                'will_overwrite_comment': item.will_overwrite_comment,
-                'overwrites_custom_comment': item.overwrites_custom_comment,
-                'probe_error': item.probe_error,
-                'risk_level': item.risk_level,
-                'issues': list(item.issues),
-                'issue_codes': list(item.issue_codes),
-                'tag_count': item.tag_count,
-                'new_tag_count': item.new_tag_count,
-                'file_modified_time': item.file_modified_time,
-            }
-        )
+    plan_dicts = [_serialize_plan_item(item) for item in plan.items]
 
     plan_dicts.sort(key=lambda entry: ((entry['name'] or '').lower(), entry['file_hash']))
     return plan_dicts
@@ -527,7 +507,7 @@ def api_get_metadata_plan():
     paginated_items = sorted_items[start:end]
 
     response = {
-        'items': [item.to_dict() for item in paginated_items],
+        'items': [_serialize_plan_item(item) for item in paginated_items],
         'statistics': plan.statistics.to_dict(),
         'categories': {
             category: [plan_item.file_hash for plan_item in items]
