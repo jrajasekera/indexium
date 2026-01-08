@@ -1,6 +1,7 @@
 import pickle
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
 import numpy as np
@@ -405,9 +406,12 @@ def test_hashing_out_of_order_results_map_correctly(tmp_path, monkeypatch):
 
     monkeypatch.setattr(scanner_module, "get_file_hash_with_path", fake_get_file_hash_with_path)
 
+    # Use ThreadPoolExecutor instead of multiprocessing.Pool because
+    # monkeypatch only affects the current process's namespace.
+    # Threads share the same address space and will see the patched function.
     hashed_files = {}
-    with Pool(processes=2) as pool:
-        results_iterator = pool.imap_unordered(scanner_module.get_file_hash_with_path, filepaths)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results_iterator = executor.map(scanner_module.get_file_hash_with_path, filepaths)
         for filepath, file_hash in results_iterator:
             hashed_files[filepath] = file_hash
 

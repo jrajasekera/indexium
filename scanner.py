@@ -242,7 +242,7 @@ def _stop_easyocr_worker():  # pragma: no cover - cleanup helper
 
 def _easyocr_request(frame: np.ndarray):
     """Send a frame to the EasyOCR worker and return raw results or None on failure."""
-    global ACTIVE_OCR_BACKEND
+    global ACTIVE_OCR_BACKEND, _BACKEND_INITIALIZED
     if easyocr is None:
         return None
 
@@ -1175,7 +1175,7 @@ def process_video_job(job_data):
     """
     Worker function to process a single video file with enhanced error handling.
     Accepts a tuple (video_path, file_hash).
-    Returns (file_hash, video_path, success, faces_list, text_entries, error_message).
+    Returns (file_hash, video_path, success, faces_list, ocr_entries, ocr_fragments, error_message).
     """
     video_path, file_hash = job_data
     logger.info(f"Processing video: {video_path}")
@@ -1185,7 +1185,7 @@ def process_video_job(job_data):
     if not is_valid:
         error_msg = f"Video validation failed: {validation_error}"
         logger.error(f"Validation failed for {video_path}: {error_msg}")
-        return (file_hash, video_path, False, [], [], error_msg)
+        return (file_hash, video_path, False, [], [], [], error_msg)
 
     max_retries = 3
     retry_count = 0
