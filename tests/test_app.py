@@ -15,6 +15,8 @@ def setup_app_db(tmp_path, monkeypatch):
     monkeypatch.setattr(scanner_module.config, 'DATABASE_FILE', str(db_path))
     monkeypatch.setattr(scanner_module, 'DATABASE_FILE', str(db_path))
     monkeypatch.setattr(app_module.config, 'DATABASE_FILE', str(db_path))
+    # Patch the already-instantiated metadata planner's database path
+    monkeypatch.setattr(app_module._metadata_planner, '_database_path', str(db_path))
     thumb_dir = tmp_path / 'thumbs'
     monkeypatch.setattr(app_module.config, 'THUMBNAIL_DIR', str(thumb_dir))
     monkeypatch.setattr(scanner_module.config, 'THUMBNAIL_DIR', str(thumb_dir))
