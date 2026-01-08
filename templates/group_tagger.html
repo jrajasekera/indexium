@@ -332,7 +332,7 @@
                                 <span class="label-text">Select Person to Merge With</span>
                             </label>
                             <div class="flex gap-2">
-                                <input list="merge-names" name="to_person_name" id="merge_target" placeholder="Select person to merge with..." class="input input-bordered flex-grow" autocomplete="off">
+                                <input list="merge-names" name="to_person_name" id="merge_target" placeholder="Select person to merge with..." class="input input-bordered flex-grow" autocomplete="off" required>
                                 <datalist id="merge-names">
                                     {% for name in existing_names %}
                                         <option value="{{ name }}">

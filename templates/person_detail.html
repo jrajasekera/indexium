@@ -122,6 +122,7 @@
                         </svg>
                         Remove Selected Faces
                     </button>
+                    <p id="remove-all-warning" class="text-xs text-error hidden">Warning: Removing all faces will delete this person entirely.</p>
                 </div>
                 {% endif %}
             </form>
@@ -215,16 +216,39 @@
     const unselectAllBtn = document.getElementById('unselect-all-faces');
     const removeFacesBtn = document.getElementById('remove-selected-faces');
     const selectionBadge = document.getElementById('person-selection-count');
+    const removeAllWarning = document.getElementById('remove-all-warning');
     const faceCheckboxes = Array.from(document.querySelectorAll('.face-checkbox'));
+    const faceForm = document.getElementById('face-selection-form');
 
     function updateSelectionState() {
         const selectedCount = faceCheckboxes.filter((cb) => cb.checked).length;
+        const totalCount = faceCheckboxes.length;
         if (selectionBadge) {
             selectionBadge.textContent = `${selectedCount} selected`;
         }
         if (removeFacesBtn) {
             removeFacesBtn.disabled = selectedCount === 0;
         }
+        if (removeAllWarning) {
+            if (selectedCount === totalCount && totalCount > 0) {
+                removeAllWarning.classList.remove('hidden');
+            } else {
+                removeAllWarning.classList.add('hidden');
+            }
+        }
+    }
+
+    if (faceForm) {
+        faceForm.addEventListener('submit', function(e) {
+            const selectedCount = faceCheckboxes.filter((cb) => cb.checked).length;
+            const totalCount = faceCheckboxes.length;
+            if (selectedCount === totalCount && totalCount > 0) {
+                if (!confirm('You are about to remove ALL faces for this person. This will delete the person entirely. Are you sure?')) {
+                    e.preventDefault();
+                    return false;
+                }
+            }
+        });
     }
 
     if (selectAllBtn) {

@@ -1421,6 +1421,10 @@ def name_cluster():
             flash("'Unknown' is reserved. Use the button to mark as unknown instead.", "error")
             return redirect(url_for('tag_group', cluster_id=cluster_id))
         conn = get_db_connection()
+        existing = conn.execute('SELECT 1 FROM faces WHERE person_name = ? LIMIT 1', (person_name,)).fetchone()
+        if existing:
+            flash(f"A person named '{person_name}' already exists. Use the merge option instead.", "error")
+            return redirect(url_for('tag_group', cluster_id=cluster_id))
         conn.execute('UPDATE faces SET person_name = ? WHERE cluster_id = ?', (person_name, cluster_id))
         conn.execute('''
             UPDATE faces
@@ -1671,15 +1675,21 @@ def person_details(person_name):
 @app.route('/rename_person/<old_name>', methods=['POST'])
 def rename_person(old_name):
     new_name = request.form['new_name'].strip()
-    if new_name:
-        conn = get_db_connection()
-        conn.execute('UPDATE faces SET person_name = ? WHERE person_name = ?', (new_name, old_name))
-        conn.commit()
-        flash(f"Renamed '{old_name}' to '{new_name}'.", "success")
-        return redirect(url_for('person_details', person_name=new_name))
-    else:
+    if not new_name:
         flash("New name cannot be empty.", "error")
         return redirect(url_for('person_details', person_name=old_name))
+    if new_name.lower() == 'unknown':
+        flash("'Unknown' is reserved. Choose a different name.", "error")
+        return redirect(url_for('person_details', person_name=old_name))
+    conn = get_db_connection()
+    existing = conn.execute('SELECT 1 FROM faces WHERE person_name = ? LIMIT 1', (new_name,)).fetchone()
+    if existing:
+        flash(f"A person named '{new_name}' already exists. Use merge instead.", "error")
+        return redirect(url_for('person_details', person_name=old_name))
+    conn.execute('UPDATE faces SET person_name = ? WHERE person_name = ?', (new_name, old_name))
+    conn.commit()
+    flash(f"Renamed '{old_name}' to '{new_name}'.", "success")
+    return redirect(url_for('person_details', person_name=new_name))
 
 
 @app.route('/unname_person', methods=['POST'])
