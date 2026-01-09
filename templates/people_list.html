@@ -22,7 +22,7 @@
     {% if people %}
     <div id="people-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {% for person in people %}
-        <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
+        <div class="card bg-base-100">
             <figure class="px-6 pt-6">
                 <img src="{{ url_for('get_face_thumbnail', face_id=person.face_id) }}"
                      alt="Face of {{ person.person_name }}"
