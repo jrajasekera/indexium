@@ -45,6 +45,51 @@
             --accent-glow: rgba(139,92,246,0.3);
         }
 
+        /* DaisyUI theme overrides */
+        [data-theme="light"],
+        [data-theme="dark"] {
+            --fallback-b1: var(--bg-base);
+            --fallback-b2: var(--bg-surface);
+            --fallback-b3: var(--bg-card);
+            --fallback-bc: var(--text-primary);
+            --fallback-p: var(--accent);
+            --fallback-pc: #ffffff;
+            --fallback-s: var(--accent);
+            --fallback-sc: #ffffff;
+            --fallback-a: var(--accent);
+            --fallback-ac: #ffffff;
+        }
+
+        [data-theme="dark"] {
+            --b1: 13 15 18;
+            --b2: 17 19 24;
+            --b3: 255 255 255 / 0.02;
+            --bc: 241 245 249;
+            --p: 139 92 246;
+            --pc: 255 255 255;
+            --s: 139 92 246;
+            --sc: 255 255 255;
+            --a: 139 92 246;
+            --ac: 255 255 255;
+            --n: 30 35 42;
+            --nc: 241 245 249;
+        }
+
+        [data-theme="light"] {
+            --b1: 248 249 252;
+            --b2: 255 255 255;
+            --b3: 255 255 255 / 0.8;
+            --bc: 15 23 42;
+            --p: 139 92 246;
+            --pc: 255 255 255;
+            --s: 139 92 246;
+            --sc: 255 255 255;
+            --a: 139 92 246;
+            --ac: 255 255 255;
+            --n: 241 245 249;
+            --nc: 15 23 42;
+        }
+
         body {
             font-family: 'Inter', sans-serif;
         }
