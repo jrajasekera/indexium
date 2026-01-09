@@ -337,6 +337,30 @@
             font-size: 11px !important;
             padding: 1px 6px !important;
         }
+
+        /* Alert and modal overrides */
+        .alert {
+            border-radius: 10px !important;
+            border: 1px solid var(--border-subtle) !important;
+            background: var(--bg-card) !important;
+            backdrop-filter: blur(8px) !important;
+        }
+
+        .alert-success {
+            border-color: rgba(34, 197, 94, 0.3) !important;
+            background: rgba(34, 197, 94, 0.1) !important;
+        }
+
+        .alert-error {
+            border-color: rgba(239, 68, 68, 0.3) !important;
+            background: rgba(239, 68, 68, 0.1) !important;
+        }
+
+        .modal-box {
+            background: var(--bg-surface) !important;
+            border: 1px solid var(--border-subtle) !important;
+            border-radius: 12px !important;
+        }
     </style>
 </head>
 <body class="bg-base-200 text-base-content">
