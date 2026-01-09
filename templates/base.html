@@ -218,6 +218,62 @@
             font-size: 15px !important;
             font-weight: 500 !important;
         }
+
+        /* Button overrides */
+        .btn {
+            border-radius: 8px !important;
+            font-weight: 500 !important;
+            transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%) !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        .btn-primary:hover {
+            filter: brightness(1.1);
+            box-shadow: 0 0 20px var(--accent-glow) !important;
+        }
+
+        .btn-primary:active {
+            transform: scale(0.98) !important;
+        }
+
+        .btn-outline {
+            background: transparent !important;
+            border: 1px solid var(--border-hover) !important;
+        }
+
+        .btn-outline:hover {
+            background: var(--bg-elevated) !important;
+            border-color: var(--border-hover) !important;
+        }
+
+        .btn-ghost {
+            background: transparent !important;
+            border: none !important;
+        }
+
+        .btn-ghost:hover {
+            background: var(--bg-elevated) !important;
+        }
+
+        .btn-error {
+            background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%) !important;
+            border: none !important;
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%) !important;
+            border: none !important;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
+            border: none !important;
+        }
     </style>
 </head>
 <body class="bg-base-200 text-base-content">
