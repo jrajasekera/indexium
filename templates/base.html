@@ -92,6 +92,29 @@
 
         body {
             font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--text-primary);
+            background: var(--bg-base);
+        }
+
+        h1, h2, h3, .text-3xl, .text-2xl, .text-xl {
+            font-weight: 600 !important;
+            line-height: 1.2 !important;
+        }
+
+        .text-base-content\/70,
+        .text-base-content\/60 {
+            color: var(--text-secondary) !important;
+        }
+
+        .divider {
+            opacity: 0.3 !important;
+        }
+
+        .divider::before,
+        .divider::after {
+            background: var(--border-subtle) !important;
         }
 
         .nav-link {
