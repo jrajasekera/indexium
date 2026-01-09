@@ -15,3 +15,6 @@ video_faces.db
 thumbnails
 video_faces.db-journal
 db_backup/
+
+# Worktrees
+.worktrees/
