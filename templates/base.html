@@ -274,6 +274,30 @@
             background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
             border: none !important;
         }
+
+        /* Input overrides */
+        .input {
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border-subtle) !important;
+            border-radius: 8px !important;
+            height: 40px !important;
+            font-size: 14px !important;
+            transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+
+        .input:focus {
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 2px var(--accent-muted) !important;
+            outline: none !important;
+        }
+
+        .input::placeholder {
+            color: var(--text-muted) !important;
+        }
+
+        .input-bordered {
+            border-color: var(--border-subtle) !important;
+        }
     </style>
 </head>
 <body class="bg-base-200 text-base-content">
