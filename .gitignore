@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .idea
+.env
 
 # Project files
 video_faces.db
@@ -18,3 +19,5 @@ db_backup/
 
 # Worktrees
 .worktrees/
+
+.DS_Store

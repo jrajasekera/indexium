@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'darwin'",
@@ -188,6 +188,7 @@ dependencies = [
     { name = "pillow" },
     { name = "pytesseract" },
     { name = "pytest" },
+    { name = "python-dotenv" },
     { name = "scikit-learn" },
     { name = "setuptools" },
 ]
@@ -204,6 +205,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.3.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "pytest", specifier = ">=8.4.1" },
+    { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "scikit-learn", specifier = "==1.5.0" },
     { name = "setuptools", specifier = ">=80.9.0" },
 ]
@@ -841,6 +843,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/db/ef34eb7bb88d6ab5c7085a89b975e19af821713395be0d3a7423df3db60b/python_bidi-0.6.6-pp310-pypy310_pp73-musllinux_1_2_armv7l.whl", hash = "sha256:91a8cb8feac5d0042e2897042fe7bbbeab5dea1ab785f4b7d0c0bbbf6bc7aefd", size = 558457, upload-time = "2025-02-18T21:42:37.442Z" },
     { url = "https://files.pythonhosted.org/packages/2b/c5/b7829e222f721339f0578f102d467101633970d1443c65b565654944c114/python_bidi-0.6.6-pp310-pypy310_pp73-musllinux_1_2_i686.whl", hash = "sha256:a6ac2a3ec5ccc3736e29bb201f27bd33707bfde774d3d222826aa181552590b2", size = 486442, upload-time = "2025-02-18T21:42:49.1Z" },
     { url = "https://files.pythonhosted.org/packages/11/40/46a72df7d1b703023749b73b68dec5d99d36d2740582337d572b9d1f92c4/python_bidi-0.6.6-pp310-pypy310_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:6dfa55611022f95058bb7deb2ac20755ae8abbe1104f87515f561e4a56944ba1", size = 461310, upload-time = "2025-02-18T21:43:01.898Z" },
+]
+
+[[package]]
+name = "python-dotenv"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/26/19cadc79a718c5edbec86fd4919a6b6d3f681039a2f6d66d14be94e75fb9/python_dotenv-1.2.1.tar.gz", hash = "sha256:42667e897e16ab0d66954af0e60a9caa94f0fd4ecf3aaf6d2d260eec1aa36ad6", size = 44221, upload-time = "2025-10-26T15:12:10.434Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/14/1b/a298b06749107c305e1fe0f814c6c74aea7b2f1e10989cb30f544a1b3253/python_dotenv-1.2.1-py3-none-any.whl", hash = "sha256:b81ee9561e9ca4004139c6cbba3a238c32b03e4894671e181b671e8cb8425d61", size = 21230, upload-time = "2025-10-26T15:12:09.109Z" },
 ]
 
 [[package]]
