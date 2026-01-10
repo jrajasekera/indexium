@@ -2,6 +2,14 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv()
+
 
 def _str_to_bool(value: str) -> bool:
     """Parse truthy environment strings into booleans."""

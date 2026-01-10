@@ -7,6 +7,7 @@ import sqlite3
 import logging
 import queue
 import multiprocessing as mp
+import shutil
 from multiprocessing import Pool, cpu_count
 from typing import Tuple, List, Optional, Dict, Any
 
@@ -36,6 +37,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 config = Config()
+
+# --- PRE-FLIGHT CHECKS ---
+def _require_ffprobe() -> None:
+    """Ensure ffprobe is available before running video scans."""
+    if shutil.which("ffprobe") is None:
+        logger.error(
+            "ffprobe not found in PATH. Install ffmpeg (includes ffprobe) and try again."
+        )
+        raise SystemExit(1)
 
 # --- CONFIGURATION ---
 VIDEO_DIRECTORY = config.VIDEO_DIR
@@ -1870,6 +1880,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         command = sys.argv[1]
         if command == "retry":
+            _require_ffprobe()
             setup_database()
             retry_failed_videos()
             sys.exit(0)
@@ -1906,6 +1917,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
     setup_database()
+    _require_ffprobe()
     scan_videos_parallel(signalHandler)
 
     # Only run clustering if the process wasn't interrupted
