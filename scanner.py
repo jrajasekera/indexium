@@ -1568,6 +1568,24 @@ def scan_videos_parallel(handler):
     jobs_to_process = [(filepath, file_hash) for filepath, file_hash, _ in jobs_to_process]
 
     initialize_ocr_backend()
+    worker_ocr_backend = ACTIVE_OCR_BACKEND
+    if OCR_ENABLED:
+        if ACTIVE_OCR_BACKEND == 'easyocr':
+            if pytesseract is None:
+                logger.warning(
+                    "EasyOCR backend cannot run in worker processes and pytesseract is unavailable; "
+                    "disabling OCR during scan."
+                )
+                worker_ocr_backend = 'disabled'
+            else:
+                logger.info(
+                    "Using Tesseract backend in scan workers to avoid EasyOCR subprocess limitations."
+                )
+                worker_ocr_backend = 'tesseract'
+        elif ACTIVE_OCR_BACKEND in (None, 'disabled'):
+            worker_ocr_backend = 'disabled'
+    else:
+        worker_ocr_backend = 'disabled'
 
     num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
     print(f"Creating a pool of {num_processes} worker processes. Press Ctrl+C to stop gracefully.")
@@ -1581,7 +1599,11 @@ def scan_videos_parallel(handler):
     total_successful = 0
     total_failed = 0
 
-    with Pool(processes=num_processes) as pool:
+    with Pool(
+        processes=num_processes,
+        initializer=_refresh_worker_initializer,
+        initargs=(worker_ocr_backend,),
+    ) as pool:
         results_iterator = pool.imap_unordered(process_video_job, jobs_to_process)
 
         try:
