@@ -3,6 +3,8 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
+from urllib.parse import urlparse, parse_qs
 
 import ffmpeg
 
@@ -48,7 +50,33 @@ def run_pipeline(video_dir: str, work_dir: str) -> None:
                 data={"cluster_id": cluster_id, "person_name": "Test Person"},
                 follow_redirects=True,
             )
-            client.post("/write_metadata", follow_redirects=True)
+            file_hashes = []
+            with sqlite3.connect(db_path) as conn:
+                file_hashes = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL"
+                    ).fetchall()
+                ]
+            if file_hashes:
+                response = client.post(
+                    "/write_metadata",
+                    data={"file_hashes": file_hashes},
+                    follow_redirects=False,
+                )
+                location = response.headers.get("Location", "")
+                query = parse_qs(urlparse(location).query)
+                operation_ids = query.get("operation_id", [])
+                if operation_ids:
+                    operation_id = int(operation_ids[0])
+                    timeout = time.monotonic() + 60
+                    while time.monotonic() < timeout:
+                        status = app_module.metadata_writer.get_operation_status(operation_id)
+                        if not status:
+                            break
+                        if status["status"] in {"completed", "cancelled"}:
+                            break
+                        time.sleep(0.5)
 
     with sqlite3.connect(db_path) as conn:
         face_count = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
