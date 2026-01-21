@@ -28,7 +28,9 @@ class StubFFmpeg:
     def output(self, stream, output_path, **kwargs):  # pragma: no cover - defensive stub
         return {"input_path": stream["input_path"], "output_path": output_path, "kwargs": kwargs}
 
-    def run(self, stream, overwrite_output=True, quiet=True):  # pragma: no cover - used in writer tests
+    def run(
+        self, stream, overwrite_output=True, quiet=True
+    ):  # pragma: no cover - used in writer tests
         temp = Path(stream["output_path"])
         temp.write_text("stub")
         metadata = stream["kwargs"].get("metadata")
@@ -81,7 +83,7 @@ def test_metadata_planner_generates_plan_with_risk_counts(tmp_path, monkeypatch)
     assert plan.statistics.safe_count == 1
     assert sorted(item.file_hash for item in plan.categories.get("danger", [])) == ["hash2"]
     assert plan.items[0].result_people == ["Alice"]
-    assert plan.items[0].file_extension == '.mp4'
+    assert plan.items[0].file_extension == ".mp4"
     assert plan.items[0].tag_count == 1
 
     filtered = planner.filter_items(plan.items, {"risk_levels": ["safe"]})
@@ -130,7 +132,16 @@ def test_backup_manager_create_backup_records_original_comment(tmp_path, monkeyp
         INSERT INTO metadata_operation_items (operation_id, file_hash, file_path, status, previous_comment, new_comment, tags_added, tags_removed)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (operation_id, "hash3", str(video_path), "pending", None, "People: Carol", "[\"Carol\"]", "[]"),
+        (
+            operation_id,
+            "hash3",
+            str(video_path),
+            "pending",
+            None,
+            "People: Carol",
+            '["Carol"]',
+            "[]",
+        ),
     )
     item_id = conn.execute("SELECT MAX(id) FROM metadata_operation_items").fetchone()[0]
     conn.commit()
@@ -140,7 +151,9 @@ def test_backup_manager_create_backup_records_original_comment(tmp_path, monkeyp
     record = backup_manager.create_backup(conn, "hash3", str(video_path), item_id)
 
     assert record.original_comment == "People: Carol"
-    history_row = conn.execute("SELECT original_comment FROM metadata_history WHERE id = ?", (record.id,)).fetchone()
+    history_row = conn.execute(
+        "SELECT original_comment FROM metadata_history WHERE id = ?", (record.id,)
+    ).fetchone()
     assert history_row[0] == "People: Carol"
 
     conn.close()
@@ -179,18 +192,22 @@ def test_history_service_lists_operations(tmp_path, monkeypatch):
         ffmpeg_module=stub_ffmpeg,
         backup_manager=metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg),
     )
-    operation_id = writer.start_operation([plan_item], metadata_services.WriteOptions(), background=False)
+    operation_id = writer.start_operation(
+        [plan_item], metadata_services.WriteOptions(), background=False
+    )
 
-    history_service = metadata_services.HistoryService(str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg))
+    history_service = metadata_services.HistoryService(
+        str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg)
+    )
     data = history_service.get_operations()
 
-    assert data['pagination']['total_items'] >= 1
-    assert any(op['id'] == operation_id for op in data['operations'])
+    assert data["pagination"]["total_items"] >= 1
+    assert any(op["id"] == operation_id for op in data["operations"])
 
     details = history_service.get_operation_details(operation_id)
     assert details is not None
-    assert details['operation']['id'] == operation_id
-    assert details['items']
+    assert details["operation"]["id"] == operation_id
+    assert details["items"]
 
 
 def test_history_service_rollback_restores_files(tmp_path, monkeypatch):
@@ -203,7 +220,9 @@ def test_history_service_rollback_restores_files(tmp_path, monkeypatch):
         ffmpeg_module=stub_ffmpeg,
         backup_manager=metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg),
     )
-    operation_id = writer.start_operation([plan_item], metadata_services.WriteOptions(), background=False)
+    operation_id = writer.start_operation(
+        [plan_item], metadata_services.WriteOptions(), background=False
+    )
 
     # Ensure comment was updated by writer stub
     assert stub_ffmpeg._comment_map.get(str(video_path)) == plan_item.result_comment
@@ -212,11 +231,13 @@ def test_history_service_rollback_restores_files(tmp_path, monkeypatch):
         backup_count = conn.execute("SELECT COUNT(*) FROM metadata_history").fetchone()[0]
     assert backup_count >= 1
 
-    history_service = metadata_services.HistoryService(str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg))
+    history_service = metadata_services.HistoryService(
+        str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg)
+    )
     result = history_service.rollback_operation(operation_id)
-    assert result['restored'] >= 1
+    assert result["restored"] >= 1
 
     details = history_service.get_operation_details(operation_id)
-    assert details['operation']['status'] == 'rolled_back'
-    assert any(item['status'] == 'rolled_back' for item in details['items'])
-    assert stub_ffmpeg._comment_map.get(str(video_path)) in {plan_item.existing_comment or '', None}
+    assert details["operation"]["status"] == "rolled_back"
+    assert any(item["status"] == "rolled_back" for item in details["items"])
+    assert stub_ffmpeg._comment_map.get(str(video_path)) in {plan_item.existing_comment or "", None}

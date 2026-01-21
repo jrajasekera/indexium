@@ -44,6 +44,10 @@ ignore = [
     "E501",   # line too long (handled by formatter)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Import order in e2e_test.py is significant for pytest module caching behavior
+"e2e_test.py" = ["I"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

@@ -1,4 +1,3 @@
-
 class SignalHandler:
     """A class to handle shutdown signals gracefully."""
 

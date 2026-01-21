@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Tuple, Dict
+from collections.abc import Iterable
 
 MIN_FRAGMENT_LENGTH = 4
 
 
 def calculate_top_text_fragments(
-    entries: Iterable[Tuple[str, int]],
+    entries: Iterable[tuple[str, int]],
     top_n: int,
     min_length: int = MIN_FRAGMENT_LENGTH,
-) -> List[Dict[str, object]]:
+) -> list[dict[str, object]]:
     """Return the top substrings by frequency and length from weighted text entries."""
     if not top_n or top_n <= 0:
         return []
 
-    substring_data: Dict[str, Dict[str, object]] = {}
+    substring_data: dict[str, dict[str, object]] = {}
     minimum = max(MIN_FRAGMENT_LENGTH, min_length)
 
     for raw_text, weight in entries:

@@ -1,4 +1,3 @@
-import json
 import pickle
 import sqlite3
 from pathlib import Path
@@ -84,13 +83,15 @@ def test_metadata_writer_completes_operation(tmp_path, monkeypatch):
         backup_manager=metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg),
     )
 
-    operation_id = writer.start_operation([plan_item], metadata_services.WriteOptions(), background=False)
+    operation_id = writer.start_operation(
+        [plan_item], metadata_services.WriteOptions(), background=False
+    )
     status = writer.get_operation_status(operation_id)
 
     assert status is not None
-    assert status['status'] == 'completed'
-    assert status['success_count'] == 1
-    assert status['failure_count'] == 0
+    assert status["status"] == "completed"
+    assert status["success_count"] == 1
+    assert status["failure_count"] == 0
     assert Path(video_path).exists()
 
     with sqlite3.connect(db_path) as conn:
@@ -110,10 +111,12 @@ def test_metadata_writer_handles_missing_file(tmp_path, monkeypatch):
         backup_manager=metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg),
     )
 
-    operation_id = writer.start_operation([plan_item], metadata_services.WriteOptions(), background=False)
+    operation_id = writer.start_operation(
+        [plan_item], metadata_services.WriteOptions(), background=False
+    )
     status = writer.get_operation_status(operation_id)
 
     assert status is not None
-    assert status['status'] == 'completed'
-    assert status['failure_count'] == 1
-    assert status['items'][0]['status'] == 'failed'
+    assert status["status"] == "completed"
+    assert status["failure_count"] == 1
+    assert status["items"][0]["status"] == "failed"

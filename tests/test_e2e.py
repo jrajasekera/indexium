@@ -1,9 +1,35 @@
-import os
 import shutil
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_app_modules():
+    """Clear cached app/config modules to ensure fresh singletons with correct database path."""
+    # Remove cached modules before test
+    modules_to_clear = [
+        "app",
+        "config",
+        "e2e_test",
+        "metadata_services",
+        "scanner",
+        "signal_handler",
+    ]
+    for mod_name in list(sys.modules.keys()):
+        if mod_name in modules_to_clear or any(
+            mod_name.startswith(f"{m}.") for m in modules_to_clear
+        ):
+            del sys.modules[mod_name]
+    yield
+    # Cleanup after test
+    for mod_name in list(sys.modules.keys()):
+        if mod_name in modules_to_clear or any(
+            mod_name.startswith(f"{m}.") for m in modules_to_clear
+        ):
+            del sys.modules[mod_name]
 
 
 def _collect_file_stats(paths: list[Path]) -> dict[Path, tuple[int, int]]:
@@ -12,7 +38,9 @@ def _collect_file_stats(paths: list[Path]) -> dict[Path, tuple[int, int]]:
 
 def _video_files(root: Path) -> list[Path]:
     extensions = {".mp4", ".mkv", ".mov", ".avi"}
-    return [path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in extensions]
+    return [
+        path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in extensions
+    ]
 
 
 def test_e2e_pipeline_runs_on_copied_videos(tmp_path, monkeypatch):
