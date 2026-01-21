@@ -21,6 +21,8 @@ INDEXIUM_VIDEO_DIR=/path python scanner.py  # Run face scanner
 pytest -q                        # Run all tests
 pytest -q tests/test_scanner.py::test_cluster_faces_updates_ids  # Single test
 python e2e_test.py test_vids     # End-to-end pipeline test (uses temp DB)
+pytest --cov --cov-report=term-missing  # Run tests with coverage
+pytest --cov --cov-report=html          # Generate HTML report in htmlcov/
 ```
 
 ### Scanner Commands

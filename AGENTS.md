@@ -40,6 +40,7 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 - Framework: Pytest. Place tests under `tests/` as `test_*.py`; name tests `test_*`.
 - Use fixtures/monkeypatching to point DB/paths to temp locations (see `tests/conftest.py`).
 - Run locally with `pytest -q`; target specific tests during development for speed.
+- Coverage: `pytest --cov --cov-report=term-missing` • HTML report: `pytest --cov --cov-report=html`
 - Test files: `test_app.py`, `test_scanner.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_config.py`, `test_util.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`.
 
 ## Commit & Pull Request Guidelines

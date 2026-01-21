@@ -21,3 +21,8 @@ db_backup/
 .worktrees/
 
 .DS_Store
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
