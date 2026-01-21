@@ -1,12 +1,16 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `app.py`: Flask web UI for tagging, reviewing, and metadata writing.
-- `scanner.py`: Video scanning, face detection/encoding, clustering, auto-classify.
-- `config.py`: Env-driven settings (paths, thresholds, cores). Centralize changes here.
-- `util.py`, `signal_handler.py`: Helpers and graceful shutdown.
-- `tests/`: Pytest suite; see `test_app.py`, `test_scanner.py`, etc.
-- `templates/`: Jinja2 templates for the UI.
+- `app.py`: Flask web UI for tagging, reviewing, metadata writing, and manual video review workflow.
+- `scanner.py`: Video scanning, face detection/encoding, clustering, OCR extraction, auto-classify. CLI entry point for scanner commands.
+- `metadata_services.py`: Metadata planning/writing system with `MetadataPlanner`, `MetadataWriter`, `BackupManager`, and `HistoryService` classes.
+- `config.py`: Env-driven settings (paths, thresholds, cores, OCR config). Centralize changes here.
+- `text_utils.py`: OCR text fragment ranking/filtering via `calculate_top_text_fragments()`.
+- `util.py`: File hashing for content-based video tracking.
+- `signal_handler.py`: `SignalHandler` class for graceful shutdown on Ctrl+C.
+- `e2e_test.py`: End-to-end pipeline test runner.
+- `tests/`: Pytest suite with `conftest.py` fixtures and test modules for each component.
+- `templates/`: Jinja2 templates for the UI (tagging, manual review, metadata preview/history).
 - `thumbnails/`, `video_faces.db`: Generated at runtime (gitignored).
 
 ## Build, Test, and Development Commands
@@ -16,6 +20,16 @@
 - Run tests: `pytest -q`  • Example single test: `pytest -q tests/test_scanner.py::test_cluster_faces_updates_ids`
 - End-to-end check: `python e2e_test.py test_vids` (creates temp DB/thumbs).
 
+### Scanner Commands
+```bash
+python scanner.py                        # Full scan
+python scanner.py refresh_ocr            # Refresh OCR for all completed videos
+python scanner.py refresh_ocr HASH123    # Refresh specific file hash
+python scanner.py continue_ocr           # Process videos missing OCR
+python scanner.py cleanup_ocr            # Remove short OCR text (default <4 chars)
+python scanner.py cleanup_ocr 6          # Custom minimum length
+```
+
 ## Coding Style & Naming Conventions
 - Python 3.10+. Follow PEP 8 (4-space indents, 100–120 col soft limit).
 - Use snake_case for functions/variables, PascalCase for classes, module names in lowercase.
@@ -24,8 +38,9 @@
 
 ## Testing Guidelines
 - Framework: Pytest. Place tests under `tests/` as `test_*.py`; name tests `test_*`.
-- Use fixtures/monkeypatching to point DB/paths to temp locations (see existing tests).
+- Use fixtures/monkeypatching to point DB/paths to temp locations (see `tests/conftest.py`).
 - Run locally with `pytest -q`; target specific tests during development for speed.
+- Test files: `test_app.py`, `test_scanner.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_config.py`, `test_util.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`.
 
 ## Commit & Pull Request Guidelines
 - Commit messages: imperative mood, concise summary (e.g., "Add pagination for tag_group"). Optional scope tags (e.g., `test:`) are welcome.
@@ -33,6 +48,7 @@
 - Link related issues; keep diffs focused. Update `README.md`/`config.py` docstrings when adding new settings.
 
 ## Security & Configuration Tips
-- Do not commit generated assets: `video_faces.db`, `thumbnails/` (already in `.gitignore`).
-- Required tools: ffmpeg, OpenCV/dlib system deps (see README). Ensure env vars like `INDEXIUM_VIDEO_DIR`, `INDEXIUM_DB`, `FLASK_DEBUG` are set as needed.
-
+- Do not commit generated assets: `video_faces.db`, `thumbnails/`, `.env` (already in `.gitignore`).
+- Required tools: ffmpeg (includes ffprobe), OpenCV/dlib system deps (see README).
+- For OCR: EasyOCR (preferred) or Tesseract as fallback.
+- Key env vars: `INDEXIUM_VIDEO_DIR`, `INDEXIUM_DB`, `FLASK_DEBUG`, `INDEXIUM_OCR_ENABLED`, `INDEXIUM_OCR_ENGINE`.
