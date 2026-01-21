@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 try:
     from dotenv import load_dotenv
@@ -14,6 +13,7 @@ if load_dotenv:
 def _str_to_bool(value: str) -> bool:
     """Parse truthy environment strings into booleans."""
     return value.lower() in {"1", "true", "yes", "on"}
+
 
 @dataclass
 class Config:
@@ -50,13 +50,14 @@ class Config:
         OCR_MAX_RESULTS_PER_VIDEO: Cap on total OCR text entries per video.
         OCR_TOP_FRAGMENT_COUNT: Number of top text fragments to compute per video.
     """
+
     VIDEO_DIR: str = os.environ.get("INDEXIUM_VIDEO_DIR", "test_videos")
     DATABASE_FILE: str = os.environ.get("INDEXIUM_DB", "video_faces.db")
     THUMBNAIL_DIR: str = "thumbnails"
     FRAME_SKIP: int = int(os.environ.get("FRAME_SKIP", "25"))
 
     _cpu = os.environ.get("CPU_CORES", "6")
-    CPU_CORES: Optional[int] = None if _cpu is None or _cpu.lower() == "none" else int(_cpu)
+    CPU_CORES: int | None = None if _cpu is None or _cpu.lower() == "none" else int(_cpu)
 
     SAVE_CHUNK_SIZE: int = int(os.environ.get("SAVE_CHUNK_SIZE", "4"))
 
@@ -73,9 +74,15 @@ class Config:
         "NO_FACE_SAMPLE_DIR",
         os.path.join(THUMBNAIL_DIR, "no_faces"),
     )
-    MANUAL_VIDEO_REVIEW_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_VIDEO_REVIEW_ENABLED", "true"))
-    MANUAL_NAME_SUGGEST_THRESHOLD: float = float(os.environ.get("MANUAL_NAME_SUGGEST_THRESHOLD", "0.82"))
-    MANUAL_REVIEW_WARMUP_ENABLED: bool = _str_to_bool(os.environ.get("MANUAL_REVIEW_WARMUP_ENABLED", "true"))
+    MANUAL_VIDEO_REVIEW_ENABLED: bool = _str_to_bool(
+        os.environ.get("MANUAL_VIDEO_REVIEW_ENABLED", "true")
+    )
+    MANUAL_NAME_SUGGEST_THRESHOLD: float = float(
+        os.environ.get("MANUAL_NAME_SUGGEST_THRESHOLD", "0.82")
+    )
+    MANUAL_REVIEW_WARMUP_ENABLED: bool = _str_to_bool(
+        os.environ.get("MANUAL_REVIEW_WARMUP_ENABLED", "true")
+    )
     MANUAL_REVIEW_WARMUP_WORKERS: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_WORKERS", "4"))
     MANUAL_KNOWN_PEOPLE_CACHE_SECONDS: float = float(
         os.environ.get("MANUAL_KNOWN_PEOPLE_CACHE_SECONDS", "30")
@@ -89,7 +96,7 @@ class Config:
     OCR_ENABLED: bool = _str_to_bool(os.environ.get("INDEXIUM_OCR_ENABLED", "true"))
     OCR_ENGINE: str = os.environ.get("INDEXIUM_OCR_ENGINE", "auto")
     _ocr_langs = os.environ.get("INDEXIUM_OCR_LANGS", "en")
-    OCR_LANGUAGES: Tuple[str, ...] = tuple(
+    OCR_LANGUAGES: tuple[str, ...] = tuple(
         part.strip() for part in _ocr_langs.split(",") if part.strip()
     ) or ("en",)
     OCR_USE_GPU: bool = _str_to_bool(os.environ.get("INDEXIUM_OCR_USE_GPU", "false"))

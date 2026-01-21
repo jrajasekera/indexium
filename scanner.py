@@ -1,21 +1,21 @@
 import json
+import logging
+import multiprocessing as mp
 import os
 import pickle
+import queue
 import re
+import shutil
 import signal
 import sqlite3
-import logging
-import queue
-import multiprocessing as mp
-import shutil
 from multiprocessing import Pool, cpu_count
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Any
 
 import cv2
 import face_recognition
+import ffmpeg
 import numpy as np
 from sklearn.cluster import DBSCAN
-import ffmpeg
 
 try:
     import easyocr
@@ -29,23 +29,23 @@ except ImportError:  # pragma: no cover - optional fallback dependency
 
 from config import Config
 from signal_handler import SignalHandler
-from util import get_file_hash
 from text_utils import calculate_top_text_fragments
+from util import get_file_hash
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 config = Config()
+
 
 # --- PRE-FLIGHT CHECKS ---
 def _require_ffprobe() -> None:
     """Ensure ffprobe is available before running video scans."""
     if shutil.which("ffprobe") is None:
-        logger.error(
-            "ffprobe not found in PATH. Install ffmpeg (includes ffprobe) and try again."
-        )
+        logger.error("ffprobe not found in PATH. Install ffmpeg (includes ffprobe) and try again.")
         raise SystemExit(1)
+
 
 # --- CONFIGURATION ---
 VIDEO_DIRECTORY = config.VIDEO_DIR
@@ -67,20 +67,20 @@ MIN_OCR_TEXT_LENGTH = max(4, OCR_MIN_TEXT_LENGTH)
 TOP_FRAGMENT_COUNT = max(1, config.OCR_TOP_FRAGMENT_COUNT)
 
 _ocr_reader = None
-_easyocr_worker: Optional[tuple] = None  # (process, request_queue, response_queue)
-ACTIVE_OCR_BACKEND: Optional[str] = None
+_easyocr_worker: tuple | None = None  # (process, request_queue, response_queue)
+ACTIVE_OCR_BACKEND: str | None = None
 _BACKEND_INITIALIZED = False
 
 if not OCR_ENABLED:
-    ACTIVE_OCR_BACKEND = 'disabled'
+    ACTIVE_OCR_BACKEND = "disabled"
 
 
 def _record_ocr_text(
-    aggregator: Dict[str, Dict[str, Any]],
+    aggregator: dict[str, dict[str, Any]],
     cleaned_text: str,
     frame_index: int,
-    timestamp_ms: Optional[int],
-    confidence: Optional[float],
+    timestamp_ms: int | None,
+    confidence: float | None,
 ):
     """Merge a normalized OCR string into the aggregator respecting limits."""
     if not cleaned_text:
@@ -125,7 +125,9 @@ def _easyocr_probe_worker(queue_obj, languages, use_gpu):  # pragma: no cover - 
         queue_obj.close()
 
 
-def _easyocr_worker_loop(request_q, response_q, languages, use_gpu):  # pragma: no cover - subprocess helper
+def _easyocr_worker_loop(
+    request_q, response_q, languages, use_gpu
+):  # pragma: no cover - subprocess helper
     try:
         reader = easyocr.Reader(list(languages), gpu=use_gpu)
     except Exception as exc:  # noqa: BLE001
@@ -157,7 +159,7 @@ def _easyocr_worker_loop(request_q, response_q, languages, use_gpu):  # pragma: 
 def _refresh_worker_initializer(backend: str):  # pragma: no cover - runs in worker
     global ACTIVE_OCR_BACKEND, _BACKEND_INITIALIZED, OCR_ENABLED
     ACTIVE_OCR_BACKEND = backend
-    OCR_ENABLED = backend not in (None, 'disabled')
+    OCR_ENABLED = backend not in (None, "disabled")
     _BACKEND_INITIALIZED = True
 
 
@@ -259,7 +261,7 @@ def _easyocr_request(frame: np.ndarray):
     worker = _easyocr_worker
     if worker is None or not worker[0].is_alive():
         if not _start_easyocr_worker():
-            ACTIVE_OCR_BACKEND = 'tesseract'
+            ACTIVE_OCR_BACKEND = "tesseract"
             _BACKEND_INITIALIZED = True
             return None
         worker = _easyocr_worker
@@ -272,21 +274,21 @@ def _easyocr_request(frame: np.ndarray):
     except queue.Empty:
         logger.error("EasyOCR worker did not respond in time; falling back to Tesseract.")
         _stop_easyocr_worker()
-        ACTIVE_OCR_BACKEND = 'tesseract'
+        ACTIVE_OCR_BACKEND = "tesseract"
         _BACKEND_INITIALIZED = True
         return None
     except Exception as exc:  # noqa: BLE001
         logger.error("EasyOCR worker communication error: %s", exc)
         _stop_easyocr_worker()
-        ACTIVE_OCR_BACKEND = 'tesseract'
+        ACTIVE_OCR_BACKEND = "tesseract"
         return None
 
-    if status == 'ok':
+    if status == "ok":
         return payload
 
     logger.warning("EasyOCR worker error: %s. Falling back to Tesseract.", payload)
     _stop_easyocr_worker()
-    ACTIVE_OCR_BACKEND = 'tesseract'
+    ACTIVE_OCR_BACKEND = "tesseract"
     _BACKEND_INITIALIZED = True
     return None
 
@@ -325,8 +327,8 @@ def diagnose_ocr_environment():
     logger.info("--- End OCR Diagnostics ---")
 
 
-def _store_fragments(cursor, file_hash: str, fragments: List[Dict[str, Any]]):
-    cursor.execute('DELETE FROM video_text_fragments WHERE file_hash = ?', (file_hash,))
+def _store_fragments(cursor, file_hash: str, fragments: list[dict[str, Any]]):
+    cursor.execute("DELETE FROM video_text_fragments WHERE file_hash = ?", (file_hash,))
     if not fragments:
         return
 
@@ -335,15 +337,15 @@ def _store_fragments(cursor, file_hash: str, fragments: List[Dict[str, Any]]):
         (
             file_hash,
             idx + 1,
-            fragment.get('substring'),
-            (fragment.get('lower') or fragment.get('substring', '')).lower(),
-            fragment.get('count', 0),
-            fragment.get('length', len(fragment.get('substring', ''))),
+            fragment.get("substring"),
+            (fragment.get("lower") or fragment.get("substring", "")).lower(),
+            fragment.get("count", 0),
+            fragment.get("length", len(fragment.get("substring", ""))),
         )
         for idx, fragment in enumerate(limited)
     ]
     cursor.executemany(
-        '''
+        """
         INSERT INTO video_text_fragments (
             file_hash,
             rank,
@@ -352,12 +354,12 @@ def _store_fragments(cursor, file_hash: str, fragments: List[Dict[str, Any]]):
             occurrence_count,
             text_length
         ) VALUES (?, ?, ?, ?, ?, ?)
-        ''',
+        """,
         payload,
     )
 
 
-def _update_ocr_counts(cursor, file_hashes: List[str]):
+def _update_ocr_counts(cursor, file_hashes: list[str]):
     """Recalculate stored OCR counts for the given file hashes."""
     for file_hash in file_hashes:
         cursor.execute(
@@ -381,16 +383,12 @@ def _recompute_fragments(cursor, file_hash: str):
         "SELECT raw_text, occurrence_count FROM video_text WHERE file_hash = ?",
         (file_hash,),
     )
-    entries = [
-        (row[0], row[1])
-        for row in cursor.fetchall()
-        if row[0]
-    ]
+    entries = [(row[0], row[1]) for row in cursor.fetchall() if row[0]]
     fragments = calculate_top_text_fragments(entries, TOP_FRAGMENT_COUNT, MIN_OCR_TEXT_LENGTH)
     _store_fragments(cursor, file_hash, fragments)
 
 
-def cleanup_ocr_text(min_length: Optional[int] = None):
+def cleanup_ocr_text(min_length: int | None = None):
     """Remove short OCR strings from the database and refresh counts."""
     threshold = min_length if min_length is not None else MIN_OCR_TEXT_LENGTH
     logger.info("Cleaning OCR entries shorter than %s characters...", threshold)
@@ -418,7 +416,7 @@ def cleanup_ocr_text(min_length: Optional[int] = None):
     logger.info("Removed short OCR entries for %s videos.", len(affected))
 
 
-def _run_refresh_sequential(jobs: List[Tuple[str, str]]) -> Tuple[int, int]:
+def _run_refresh_sequential(jobs: list[tuple[str, str]]) -> tuple[int, int]:
     refreshed = 0
     skipped = 0
     for video_path, file_hash in jobs:
@@ -439,22 +437,22 @@ def _persist_ocr_results(file_hash: str, ocr_entries, ocr_fragments) -> bool:
     try:
         with sqlite3.connect(DATABASE_FILE, timeout=30) as conn:
             cursor = conn.cursor()
-            cursor.execute('DELETE FROM video_text WHERE file_hash = ?', (file_hash,))
+            cursor.execute("DELETE FROM video_text WHERE file_hash = ?", (file_hash,))
             if ocr_entries:
                 payload = [
                     (
                         file_hash,
-                        item.get('raw_text'),
-                        item.get('normalized_text'),
-                        item.get('confidence'),
-                        item.get('first_seen_frame'),
-                        item.get('first_seen_timestamp_ms'),
-                        item.get('occurrence_count', 1),
+                        item.get("raw_text"),
+                        item.get("normalized_text"),
+                        item.get("confidence"),
+                        item.get("first_seen_frame"),
+                        item.get("first_seen_timestamp_ms"),
+                        item.get("occurrence_count", 1),
                     )
                     for item in ocr_entries
                 ]
                 cursor.executemany(
-                    '''
+                    """
                     INSERT INTO video_text (
                         file_hash,
                         raw_text,
@@ -464,19 +462,19 @@ def _persist_ocr_results(file_hash: str, ocr_entries, ocr_fragments) -> bool:
                         first_seen_timestamp_ms,
                         occurrence_count
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''',
+                    """,
                     payload,
                 )
 
             _store_fragments(cursor, file_hash, ocr_fragments)
 
             cursor.execute(
-                '''
+                """
                 UPDATE scanned_files
                 SET ocr_text_count = ?,
                     ocr_last_updated = CURRENT_TIMESTAMP
                 WHERE file_hash = ?
-                ''',
+                """,
                 (len(ocr_entries), file_hash),
             )
             conn.commit()
@@ -486,31 +484,43 @@ def _persist_ocr_results(file_hash: str, ocr_entries, ocr_fragments) -> bool:
         return False
 
 
-def _process_ocr_jobs(jobs: List[Tuple[str, str]], skipped: int = 0) -> Tuple[int, int]:
+def _process_ocr_jobs(jobs: list[tuple[str, str]], skipped: int = 0) -> tuple[int, int]:
     if not jobs:
         logger.info("No readable videos available for OCR processing.")
         return 0, skipped
 
     backend = ACTIVE_OCR_BACKEND
     worker_backend = backend
-    if backend == 'easyocr':
+    if backend == "easyocr":
         if pytesseract is None:
             logger.warning("EasyOCR backend cannot run in worker processes; running sequentially.")
             refreshed_seq, skipped_seq = _run_refresh_sequential(jobs)
             return refreshed_seq, skipped + skipped_seq
-        logger.info("Using Tesseract backend in OCR workers to avoid EasyOCR subprocess limitations.")
-        worker_backend = 'tesseract'
+        logger.info(
+            "Using Tesseract backend in OCR workers to avoid EasyOCR subprocess limitations."
+        )
+        worker_backend = "tesseract"
 
     num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
     num_processes = max(1, num_processes)
 
     refreshed = 0
 
-    with Pool(processes=num_processes, initializer=_refresh_worker_initializer, initargs=(worker_backend,)) as pool:
+    with Pool(
+        processes=num_processes, initializer=_refresh_worker_initializer, initargs=(worker_backend,)
+    ) as pool:
         results = pool.imap_unordered(process_video_job, jobs)
         try:
             for result in results:
-                file_hash, video_path, success, _faces, ocr_entries, ocr_fragments, error_message = result
+                (
+                    file_hash,
+                    video_path,
+                    success,
+                    _faces,
+                    ocr_entries,
+                    ocr_fragments,
+                    error_message,
+                ) = result
                 if not success:
                     logger.warning("OCR processing failed for %s: %s", video_path, error_message)
                     skipped += 1
@@ -534,41 +544,41 @@ def initialize_ocr_backend():
         return
 
     if not OCR_ENABLED:
-        ACTIVE_OCR_BACKEND = 'disabled'
+        ACTIVE_OCR_BACKEND = "disabled"
         _stop_easyocr_worker()
         _BACKEND_INITIALIZED = True
         return
 
-    if ACTIVE_OCR_BACKEND and ACTIVE_OCR_BACKEND != 'disabled':
+    if ACTIVE_OCR_BACKEND and ACTIVE_OCR_BACKEND != "disabled":
         _BACKEND_INITIALIZED = True
         return
 
     logger.info("OCR engine preference: %s", OCR_ENGINE)
 
-    preferred: List[str]
-    if OCR_ENGINE == 'easyocr':
-        preferred = ['easyocr', 'tesseract']
-    elif OCR_ENGINE == 'tesseract':
-        preferred = ['tesseract']
+    preferred: list[str]
+    if OCR_ENGINE == "easyocr":
+        preferred = ["easyocr", "tesseract"]
+    elif OCR_ENGINE == "tesseract":
+        preferred = ["tesseract"]
     else:  # auto or unknown
-        preferred = ['easyocr', 'tesseract']
+        preferred = ["easyocr", "tesseract"]
 
     for backend in preferred:
-        if backend == 'easyocr':
+        if backend == "easyocr":
             if easyocr is None:
                 continue
             logger.info("Probing EasyOCR backend compatibility...")
             if _probe_easyocr_support():
-                ACTIVE_OCR_BACKEND = 'easyocr'
+                ACTIVE_OCR_BACKEND = "easyocr"
                 logger.info("OCR backend set to EasyOCR.")
                 _BACKEND_INITIALIZED = True
                 return
             logger.warning("EasyOCR backend unavailable; trying next option.")
-        elif backend == 'tesseract':
+        elif backend == "tesseract":
             if pytesseract is None:
                 logger.warning("pytesseract not installed; cannot use Tesseract backend.")
                 continue
-            ACTIVE_OCR_BACKEND = 'tesseract'
+            ACTIVE_OCR_BACKEND = "tesseract"
             _stop_easyocr_worker()
             logger.info("OCR backend set to Tesseract (pytesseract).")
             _BACKEND_INITIALIZED = True
@@ -576,7 +586,7 @@ def initialize_ocr_backend():
 
     logger.warning("No OCR backend available; disabling OCR feature.")
     OCR_ENABLED = False
-    ACTIVE_OCR_BACKEND = 'disabled'
+    ACTIVE_OCR_BACKEND = "disabled"
     _stop_easyocr_worker()
     _BACKEND_INITIALIZED = True
 
@@ -584,7 +594,7 @@ def initialize_ocr_backend():
 def get_ocr_reader():
     """Lazily instantiate and cache the EasyOCR reader once backend is confirmed."""
     global _ocr_reader, OCR_ENABLED, ACTIVE_OCR_BACKEND
-    if not OCR_ENABLED or ACTIVE_OCR_BACKEND != 'easyocr':
+    if not OCR_ENABLED or ACTIVE_OCR_BACKEND != "easyocr":
         return None
     if _ocr_reader is None:
         try:
@@ -597,12 +607,12 @@ def get_ocr_reader():
         except Exception as exc:  # pragma: no cover - hardware/env specific
             logger.error("Failed to initialize EasyOCR reader: %s", exc)
             OCR_ENABLED = False
-            ACTIVE_OCR_BACKEND = 'disabled'
+            ACTIVE_OCR_BACKEND = "disabled"
             return None
     return _ocr_reader
 
 
-def _normalize_ocr_text(text: str) -> Optional[str]:
+def _normalize_ocr_text(text: str) -> str | None:
     """Clean whitespace and validate text length for OCR results."""
     if not text:
         return None
@@ -614,7 +624,7 @@ def _normalize_ocr_text(text: str) -> Optional[str]:
     return cleaned
 
 
-def _timestamp_ms_for_frame(frame_index: int, fps: float) -> Optional[int]:
+def _timestamp_ms_for_frame(frame_index: int, fps: float) -> int | None:
     """Convert a frame index to milliseconds using FPS when available."""
     if not fps or fps <= 0:
         return None
@@ -625,7 +635,7 @@ def collect_ocr_from_frame(
     frame: np.ndarray,
     frame_index: int,
     fps: float,
-    aggregator: Dict[str, Dict[str, Any]],
+    aggregator: dict[str, dict[str, Any]],
 ):
     """Run OCR on a frame and merge results into the aggregator."""
     if not OCR_ENABLED:
@@ -635,17 +645,17 @@ def collect_ocr_from_frame(
         initialize_ocr_backend()
     if not _BACKEND_INITIALIZED:
         return
-    if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, 'disabled'):
+    if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, "disabled"):
         return
 
     timestamp_ms = _timestamp_ms_for_frame(frame_index, fps)
     backend = ACTIVE_OCR_BACKEND
 
-    if backend == 'easyocr':
+    if backend == "easyocr":
         results = _easyocr_request(frame)
         if not results:
             # Worker failed; backend may have switched to tesseract.
-            if ACTIVE_OCR_BACKEND == 'tesseract':
+            if ACTIVE_OCR_BACKEND == "tesseract":
                 collect_ocr_from_frame(frame, frame_index, fps, aggregator)
             return
         for _, text, confidence in results:
@@ -656,7 +666,7 @@ def collect_ocr_from_frame(
                 continue
             _record_ocr_text(aggregator, cleaned, frame_index, timestamp_ms, confidence)
 
-    elif backend == 'tesseract':
+    elif backend == "tesseract":
         if pytesseract is None:
             return
         try:
@@ -673,7 +683,9 @@ def collect_ocr_from_frame(
             _record_ocr_text(aggregator, cleaned, frame_index, timestamp_ms, None)
 
 
-def serialize_ocr_entries(file_hash: str, aggregator: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def serialize_ocr_entries(
+    file_hash: str, aggregator: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Prepare a sorted list of OCR records ready for persistence."""
     if not aggregator:
         return []
@@ -699,41 +711,44 @@ def serialize_ocr_entries(file_hash: str, aggregator: Dict[str, Dict[str, Any]])
         )
     return payload
 
+
 def get_file_hash_with_path(filepath):
     """Return the given filepath alongside its computed hash."""
     return filepath, get_file_hash(filepath)
 
-def validate_video_file(video_path: str) -> Tuple[bool, Optional[str]]:
+
+def validate_video_file(video_path: str) -> tuple[bool, str | None]:
     """
     Validates a video file using ffprobe to check for corruption and basic properties.
     Returns (is_valid, error_message).
     """
     try:
         probe = ffmpeg.probe(video_path, loglevel="error")
-        format_info = probe.get('format', {})
-        duration = float(format_info.get('duration', 0))
+        format_info = probe.get("format", {})
+        duration = float(format_info.get("duration", 0))
 
         # Check for basic validity
         if duration <= 0:
             return False, "Video has zero or negative duration"
 
         # Check for video streams
-        video_streams = [s for s in probe.get('streams', []) if s.get('codec_type') == 'video']
+        video_streams = [s for s in probe.get("streams", []) if s.get("codec_type") == "video"]
         if not video_streams:
             return False, "No video streams found"
 
         # Check for corrupted streams (basic check)
         for stream in video_streams:
-            if stream.get('codec_name') is None:
+            if stream.get("codec_name") is None:
                 return False, "Corrupted video stream detected"
 
         return True, None
 
     except ffmpeg.Error as e:
-        error_msg = e.stderr.decode('utf-8') if e.stderr else str(e)
+        error_msg = e.stderr.decode("utf-8") if e.stderr else str(e)
         return False, f"FFprobe error: {error_msg}"
     except Exception as e:
         return False, f"Validation error: {str(e)}"
+
 
 def save_thumbnail(face_id, video_path, frame_number, location_str):
     """Extracts and saves a thumbnail for a face."""
@@ -750,13 +765,14 @@ def save_thumbnail(face_id, video_path, frame_number, location_str):
             logger.error(f"Could not read frame {frame_number} from {video_path} for thumbnail")
             return
 
-        top, right, bottom, left = map(int, location_str.split(','))
+        top, right, bottom, left = map(int, location_str.split(","))
         face_img = frame[top:bottom, left:right]
         thumb_path = os.path.join(config.THUMBNAIL_DIR, f"{face_id}.jpg")
         cv2.imwrite(thumb_path, face_img)
         logger.debug(f"Thumbnail saved: {thumb_path}")
     except Exception as e:
         logger.error(f"Failed to create thumbnail for {video_path}: {e}")
+
 
 def cleanup_failed_thumbnails():
     """Removes thumbnail files that don't have corresponding face records."""
@@ -773,7 +789,7 @@ def cleanup_failed_thumbnails():
 
         cleaned_count = 0
         for filename in os.listdir(thumbnail_dir):
-            if filename.endswith('.jpg'):
+            if filename.endswith(".jpg"):
                 try:
                     face_id = int(filename[:-4])  # Remove .jpg extension
                     if face_id not in existing_face_ids:
@@ -787,6 +803,7 @@ def cleanup_failed_thumbnails():
             logger.info(f"Cleaned up {cleaned_count} orphaned thumbnail files")
     except Exception as e:
         logger.error(f"Error during thumbnail cleanup: {e}")
+
 
 def retry_failed_videos():
     """Attempts to reprocess videos that previously failed."""
@@ -837,20 +854,22 @@ def retry_failed_videos():
                 )
                 logger.warning(f"Retry failed for {video_path}: {error_message}")
 
-        logger.info(f"Retry complete. Successfully retried {successful_retries}/{len(failed_videos)} videos")
+        logger.info(
+            f"Retry complete. Successfully retried {successful_retries}/{len(failed_videos)} videos"
+        )
 
     except Exception as e:
         logger.error(f"Error during retry process: {e}")
 
 
-def refresh_ocr_data(target_hashes: Optional[List[str]] = None):
+def refresh_ocr_data(target_hashes: list[str] | None = None):
     """Rebuild OCR text entries for completed videos without duplicating face data."""
     if not OCR_ENABLED:
         logger.warning("OCR is disabled. Enable OCR to refresh text data.")
         return
 
     initialize_ocr_backend()
-    if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, 'disabled'):
+    if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, "disabled"):
         logger.warning("No usable OCR backend; skipping OCR refresh.")
         return
 
@@ -863,13 +882,13 @@ def refresh_ocr_data(target_hashes: Optional[List[str]] = None):
             "SELECT file_hash, last_known_filepath, COALESCE(face_count, 0) AS face_count "
             "FROM scanned_files WHERE last_known_filepath IS NOT NULL"
         ]
-        params: List[str] = []
+        params: list[str] = []
         if target_hashes:
-            placeholders = ','.join('?' for _ in target_hashes)
+            placeholders = ",".join("?" for _ in target_hashes)
             query_parts.append(f" AND file_hash IN ({placeholders})")
             params.extend(target_hashes)
         query_parts.append(" ORDER BY (last_attempt IS NULL), last_attempt DESC, file_hash")
-        rows = conn.execute(''.join(query_parts), params).fetchall()
+        rows = conn.execute("".join(query_parts), params).fetchall()
 
     if not rows:
         logger.info("No videos available for OCR refresh.")
@@ -878,8 +897,8 @@ def refresh_ocr_data(target_hashes: Optional[List[str]] = None):
     jobs = []
     skipped = 0
     for row in rows:
-        file_hash = row['file_hash']
-        video_path = row['last_known_filepath']
+        file_hash = row["file_hash"]
+        video_path = row["last_known_filepath"]
         if not video_path or not os.path.exists(video_path):
             logger.warning("Skipping OCR refresh for %s (missing file).", file_hash)
             skipped += 1
@@ -897,7 +916,7 @@ def continue_ocr_data():
         return
 
     initialize_ocr_backend()
-    if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, 'disabled'):
+    if not OCR_ENABLED or ACTIVE_OCR_BACKEND in (None, "disabled"):
         logger.warning("No usable OCR backend; skipping OCR continue.")
         return
 
@@ -921,8 +940,8 @@ def continue_ocr_data():
     jobs = []
     skipped = 0
     for row in rows:
-        file_hash = row['file_hash']
-        video_path = row['last_known_filepath']
+        file_hash = row["file_hash"]
+        video_path = row["last_known_filepath"]
         if not video_path or not os.path.exists(video_path):
             logger.warning("Skipping OCR continue for %s (missing file).", file_hash)
             skipped += 1
@@ -940,14 +959,14 @@ def setup_database():
         cursor = conn.cursor()
 
         # Create tables if they don't exist
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS scanned_files (
                 file_hash TEXT PRIMARY KEY,
                 last_known_filepath TEXT NOT NULL
             )
-        ''')
+        """)
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS faces (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_hash TEXT NOT NULL,
@@ -962,20 +981,20 @@ def setup_database():
                 suggested_candidates TEXT DEFAULT NULL,
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
-        ''')
+        """)
 
         cursor.execute("PRAGMA table_info(faces)")
         face_columns = {row[1] for row in cursor.fetchall()}
-        if 'suggested_person_name' not in face_columns:
+        if "suggested_person_name" not in face_columns:
             logger.info("Adding suggested_person_name column to faces table...")
             cursor.execute("ALTER TABLE faces ADD COLUMN suggested_person_name TEXT DEFAULT NULL")
-        if 'suggested_confidence' not in face_columns:
+        if "suggested_confidence" not in face_columns:
             logger.info("Adding suggested_confidence column to faces table...")
             cursor.execute("ALTER TABLE faces ADD COLUMN suggested_confidence REAL DEFAULT NULL")
-        if 'suggestion_status' not in face_columns:
+        if "suggestion_status" not in face_columns:
             logger.info("Adding suggestion_status column to faces table...")
             cursor.execute("ALTER TABLE faces ADD COLUMN suggestion_status TEXT DEFAULT NULL")
-        if 'suggested_candidates' not in face_columns:
+        if "suggested_candidates" not in face_columns:
             logger.info("Adding suggested_candidates column to faces table...")
             cursor.execute("ALTER TABLE faces ADD COLUMN suggested_candidates TEXT DEFAULT NULL")
 
@@ -983,54 +1002,72 @@ def setup_database():
         cursor.execute("PRAGMA table_info(scanned_files)")
         columns = {row[1] for row in cursor.fetchall()}
 
-        if 'processing_status' not in columns:
+        if "processing_status" not in columns:
             logger.info("Adding processing_status column to scanned_files table...")
-            cursor.execute("ALTER TABLE scanned_files ADD COLUMN processing_status TEXT DEFAULT 'pending'")
+            cursor.execute(
+                "ALTER TABLE scanned_files ADD COLUMN processing_status TEXT DEFAULT 'pending'"
+            )
 
-        if 'error_message' not in columns:
+        if "error_message" not in columns:
             logger.info("Adding error_message column to scanned_files table...")
             cursor.execute("ALTER TABLE scanned_files ADD COLUMN error_message TEXT DEFAULT NULL")
 
-        if 'last_attempt' not in columns:
+        if "last_attempt" not in columns:
             logger.info("Adding last_attempt column to scanned_files table...")
             cursor.execute("ALTER TABLE scanned_files ADD COLUMN last_attempt TIMESTAMP")
             # Update existing rows with current timestamp
-            cursor.execute("UPDATE scanned_files SET last_attempt = CURRENT_TIMESTAMP WHERE last_attempt IS NULL")
+            cursor.execute(
+                "UPDATE scanned_files SET last_attempt = CURRENT_TIMESTAMP WHERE last_attempt IS NULL"
+            )
 
-        if 'face_count' not in columns:
+        if "face_count" not in columns:
             logger.info("Adding face_count column to scanned_files table...")
             cursor.execute("ALTER TABLE scanned_files ADD COLUMN face_count INTEGER DEFAULT NULL")
 
-        if 'manual_review_status' not in columns:
+        if "manual_review_status" not in columns:
             logger.info("Adding manual_review_status column to scanned_files table...")
-            cursor.execute("ALTER TABLE scanned_files ADD COLUMN manual_review_status TEXT DEFAULT 'not_required'")
+            cursor.execute(
+                "ALTER TABLE scanned_files ADD COLUMN manual_review_status TEXT DEFAULT 'not_required'"
+            )
 
-        if 'sample_seed' not in columns:
+        if "sample_seed" not in columns:
             logger.info("Adding sample_seed column to scanned_files table...")
             cursor.execute("ALTER TABLE scanned_files ADD COLUMN sample_seed INTEGER DEFAULT NULL")
 
-        if 'ocr_text_count' not in columns:
+        if "ocr_text_count" not in columns:
             logger.info("Adding ocr_text_count column to scanned_files table...")
             cursor.execute("ALTER TABLE scanned_files ADD COLUMN ocr_text_count INTEGER DEFAULT 0")
 
-        if 'ocr_last_updated' not in columns:
+        if "ocr_last_updated" not in columns:
             logger.info("Adding ocr_last_updated column to scanned_files table...")
             cursor.execute("ALTER TABLE scanned_files ADD COLUMN ocr_last_updated TIMESTAMP")
 
         # Add indexes for faster lookups
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_file_hash ON faces (file_hash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_cluster_id ON faces (cluster_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scanned_files_status ON scanned_files (processing_status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scanned_files_manual_status ON scanned_files (manual_review_status)')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_file_hash ON faces (file_hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_cluster_id ON faces (cluster_id)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scanned_files_status ON scanned_files (processing_status)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scanned_files_manual_status ON scanned_files (manual_review_status)"
+        )
 
         # Add composite indexes for frequently queried combinations
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_person_cluster ON faces (person_name, cluster_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_cluster_person ON faces (cluster_id, person_name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_file_person ON faces (file_hash, person_name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces (person_name, id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_faces_suggestion ON faces (cluster_id, suggested_person_name)')
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faces_person_cluster ON faces (person_name, cluster_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faces_cluster_person ON faces (cluster_id, person_name)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faces_file_person ON faces (file_hash, person_name)"
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces (person_name, id)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faces_suggestion ON faces (cluster_id, suggested_person_name)"
+        )
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS video_text_fragments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_hash TEXT NOT NULL,
@@ -1043,11 +1080,15 @@ def setup_database():
                 UNIQUE(file_hash, fragment_lower),
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_text_fragments_file_hash ON video_text_fragments (file_hash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_text_fragments_rank ON video_text_fragments (file_hash, rank)')
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_text_fragments_file_hash ON video_text_fragments (file_hash)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_text_fragments_rank ON video_text_fragments (file_hash, rank)"
+        )
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS video_text (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_hash TEXT NOT NULL,
@@ -1061,13 +1102,19 @@ def setup_database():
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash),
                 UNIQUE(file_hash, normalized_text)
             )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_video_text_file_hash ON video_text (file_hash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_video_text_normalized ON video_text (normalized_text)')
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_text_file_hash ON video_text (file_hash)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_text_normalized ON video_text (normalized_text)"
+        )
 
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scanned_files_ocr_status ON scanned_files (ocr_text_count, processing_status)')
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scanned_files_ocr_status ON scanned_files (ocr_text_count, processing_status)"
+        )
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS video_people (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_hash TEXT NOT NULL,
@@ -1076,11 +1123,13 @@ def setup_database():
                 UNIQUE(file_hash, person_name),
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
-        ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_video_people_file_hash ON video_people (file_hash)')
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_people_file_hash ON video_people (file_hash)"
+        )
 
         # Metadata operations tables for smart metadata planner
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata_operations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 operation_type TEXT NOT NULL,
@@ -1093,15 +1142,15 @@ def setup_database():
                 error_message TEXT,
                 user_note TEXT
             )
-        ''')
+        """)
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_operations_status ON metadata_operations (status)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_operations_status ON metadata_operations (status)"
         )
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_operations_started ON metadata_operations (started_at DESC)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_operations_started ON metadata_operations (started_at DESC)"
         )
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata_operation_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 operation_id INTEGER NOT NULL,
@@ -1117,27 +1166,27 @@ def setup_database():
                 FOREIGN KEY (operation_id) REFERENCES metadata_operations (id) ON DELETE CASCADE,
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
-        ''')
+        """)
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata_comment_cache (
                 file_hash TEXT PRIMARY KEY,
                 comment TEXT,
                 file_mtime REAL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
+        """)
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_items_operation ON metadata_operation_items (operation_id)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_items_operation ON metadata_operation_items (operation_id)"
         )
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_items_status ON metadata_operation_items (status)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_items_status ON metadata_operation_items (status)"
         )
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_items_file ON metadata_operation_items (file_hash)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_items_file ON metadata_operation_items (file_hash)"
         )
 
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 operation_item_id INTEGER NOT NULL,
@@ -1148,33 +1197,33 @@ def setup_database():
                 FOREIGN KEY (operation_item_id) REFERENCES metadata_operation_items (id) ON DELETE CASCADE,
                 FOREIGN KEY (file_hash) REFERENCES scanned_files (file_hash)
             )
-        ''')
+        """)
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_history_file ON metadata_history (file_hash)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_history_file ON metadata_history (file_hash)"
         )
         cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_metadata_history_operation ON metadata_history (operation_item_id)'
+            "CREATE INDEX IF NOT EXISTS idx_metadata_history_operation ON metadata_history (operation_item_id)"
         )
 
         # Backfill counts and manual review status for legacy records
         cursor.execute(
-            '''
+            """
             UPDATE scanned_files
             SET face_count = (
                 SELECT COUNT(*) FROM faces WHERE faces.file_hash = scanned_files.file_hash
             )
             WHERE face_count IS NULL
-            '''
+            """
         )
         cursor.execute(
-            '''
+            """
             UPDATE scanned_files
             SET manual_review_status = 'pending'
             WHERE manual_review_status = 'not_required'
               AND (
                   SELECT COUNT(*) FROM faces WHERE faces.file_hash = scanned_files.file_hash
               ) = 0
-            '''
+            """
         )
 
         conn.commit()
@@ -1202,7 +1251,7 @@ def process_video_job(job_data):
 
     while retry_count < max_retries:
         faces_found_in_video = []
-        ocr_aggregator: Dict[str, Dict[str, Any]] = {}
+        ocr_aggregator: dict[str, dict[str, Any]] = {}
         try:
             video_capture = cv2.VideoCapture(video_path)
             if not video_capture.isOpened():
@@ -1249,16 +1298,22 @@ def process_video_job(job_data):
                             face_locations = face_recognition.face_locations(
                                 rgb_frame, model=config.FACE_DETECTION_MODEL
                             )
-                            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+                            face_encodings = face_recognition.face_encodings(
+                                rgb_frame, face_locations
+                            )
 
-                            for location, encoding in zip(face_locations, face_encodings):
+                            for location, encoding in zip(
+                                face_locations, face_encodings, strict=False
+                            ):
                                 # Scale coordinates back to original frame size
                                 top, right, bottom, left = location
                                 location_original = (top * 2, right * 2, bottom * 2, left * 2)
                                 location_str = ",".join(map(str, location_original))
                                 encoding_blob = pickle.dumps(encoding)
                                 # Associate face with the file's hash, not its path
-                                faces_found_in_video.append((file_hash, frame_count, location_str, encoding_blob))
+                                faces_found_in_video.append(
+                                    (file_hash, frame_count, location_str, encoding_blob)
+                                )
                         except Exception as e:
                             logger.warning(f"Face detection error at frame {frame_count}: {e}")
                             # Continue processing other frames
@@ -1275,9 +1330,9 @@ def process_video_job(job_data):
             video_capture.release()
             ocr_entries = serialize_ocr_entries(file_hash, ocr_aggregator)
             weighted_entries = [
-                (item['raw_text'], item.get('occurrence_count', 1))
+                (item["raw_text"], item.get("occurrence_count", 1))
                 for item in ocr_entries
-                if item.get('raw_text')
+                if item.get("raw_text")
             ]
             top_fragments = calculate_top_text_fragments(
                 weighted_entries,
@@ -1315,7 +1370,7 @@ def process_video_job(job_data):
         if retry_count < max_retries:
             logger.info(f"Retrying {video_path} (attempt {retry_count + 1}/{max_retries})")
             # Clean up any resources
-            if 'video_capture' in locals():
+            if "video_capture" in locals():
                 video_capture.release()
 
     error_msg = f"Failed after {max_retries} attempts"
@@ -1358,12 +1413,12 @@ def write_data_to_db(
 
             # Map hashes to paths for thumbnail generation
             file_map = {h: p for h, p, _, _ in scanned_files_info} if scanned_files_info else {}
-            ocr_map: Dict[str, List[Dict[str, Any]]] = (
+            ocr_map: dict[str, list[dict[str, Any]]] = (
                 {file_hash: entries for file_hash, entries in ocr_text_data}
                 if ocr_text_data
                 else {}
             )
-            fragment_map: Dict[str, List[Dict[str, Any]]] = (
+            fragment_map: dict[str, list[dict[str, Any]]] = (
                 {file_hash: fragments for file_hash, fragments in ocr_fragments_data}
                 if ocr_fragments_data
                 else {}
@@ -1373,13 +1428,13 @@ def write_data_to_db(
             if scanned_files_info:
                 upsert_rows = []
                 for file_hash, path, face_count, text_count in scanned_files_info:
-                    manual_status = 'pending' if face_count == 0 else 'not_required'
+                    manual_status = "pending" if face_count == 0 else "not_required"
                     upsert_rows.append(
-                        (file_hash, path, 'completed', face_count, manual_status, text_count)
+                        (file_hash, path, "completed", face_count, manual_status, text_count)
                     )
 
                 cursor.executemany(
-                    '''
+                    """
                     INSERT INTO scanned_files (
                         file_hash,
                         last_known_filepath,
@@ -1408,14 +1463,14 @@ def write_data_to_db(
                         END,
                         ocr_text_count = excluded.ocr_text_count,
                         ocr_last_updated = CURRENT_TIMESTAMP
-                    ''',
+                    """,
                     upsert_rows,
                 )
 
             # Update failed files
             if failed_files_info:
                 cursor.executemany(
-                    '''
+                    """
                     INSERT INTO scanned_files (
                         file_hash,
                         last_known_filepath,
@@ -1432,8 +1487,8 @@ def write_data_to_db(
                         processing_status = excluded.processing_status,
                         error_message = excluded.error_message,
                         last_attempt = CURRENT_TIMESTAMP
-                    ''',
-                    [(h, p, 'failed', err) for h, p, err in failed_files_info],
+                    """,
+                    [(h, p, "failed", err) for h, p, err in failed_files_info],
                 )
 
             # Replace OCR text entries for processed files
@@ -1441,23 +1496,23 @@ def write_data_to_db(
             if ocr_map:
                 for file_hash, entries in ocr_map.items():
                     processed_hashes.add(file_hash)
-                    cursor.execute('DELETE FROM video_text WHERE file_hash = ?', (file_hash,))
+                    cursor.execute("DELETE FROM video_text WHERE file_hash = ?", (file_hash,))
                     if not entries:
                         continue
                     payload = [
                         (
                             file_hash,
-                            item.get('raw_text'),
-                            item.get('normalized_text'),
-                            item.get('confidence'),
-                            item.get('first_seen_frame'),
-                            item.get('first_seen_timestamp_ms'),
-                            item.get('occurrence_count', 1),
+                            item.get("raw_text"),
+                            item.get("normalized_text"),
+                            item.get("confidence"),
+                            item.get("first_seen_frame"),
+                            item.get("first_seen_timestamp_ms"),
+                            item.get("occurrence_count", 1),
                         )
                         for item in entries
                     ]
                     cursor.executemany(
-                        '''
+                        """
                         INSERT INTO video_text (
                             file_hash,
                             raw_text,
@@ -1467,7 +1522,7 @@ def write_data_to_db(
                             first_seen_timestamp_ms,
                             occurrence_count
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ''',
+                        """,
                         payload,
                     )
 
@@ -1484,7 +1539,7 @@ def write_data_to_db(
             if face_data:
                 for file_hash, frame_number, loc_str, enc_blob in face_data:
                     cursor.execute(
-                        'INSERT INTO faces (file_hash, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)',
+                        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding) VALUES (?, ?, ?, ?)",
                         (file_hash, frame_number, loc_str, enc_blob),
                     )
                     face_id = cursor.lastrowid
@@ -1504,14 +1559,19 @@ def scan_videos_parallel(handler):
     Identifies videos by hash to avoid re-processing moved/renamed files.
     """
     print("Starting parallel video scan...")
-    all_video_files = [os.path.join(r, f) for r, _, fs in os.walk(VIDEO_DIRECTORY) for f in fs if
-                       f.lower().endswith(('.mp4', '.mkv', '.mov', '.avi'))]
+    all_video_files = [
+        os.path.join(r, f)
+        for r, _, fs in os.walk(VIDEO_DIRECTORY)
+        for f in fs
+        if f.lower().endswith((".mp4", ".mkv", ".mov", ".avi"))
+    ]
 
     with sqlite3.connect(DATABASE_FILE) as conn:
         scanned_hashes = {row[0] for row in conn.execute("SELECT file_hash FROM scanned_files")}
 
     print(
-        f"Found {len(all_video_files)} video files. Identifying new or changed files by hashing. This may take a moment...")
+        f"Found {len(all_video_files)} video files. Identifying new or changed files by hashing. This may take a moment..."
+    )
 
     # Determine the number of processes for hashing
     num_hashing_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
@@ -1534,7 +1594,9 @@ def scan_videos_parallel(handler):
                     break
 
                 processed_count += 1
-                print(f"[{processed_count}/{total_files}] Hashed: {filepath} | Hash: {file_hash if file_hash else 'FAILED'}")
+                print(
+                    f"[{processed_count}/{total_files}] Hashed: {filepath} | Hash: {file_hash if file_hash else 'FAILED'}"
+                )
 
                 if file_hash:
                     hashed_files[filepath] = file_hash
@@ -1570,22 +1632,22 @@ def scan_videos_parallel(handler):
     initialize_ocr_backend()
     worker_ocr_backend = ACTIVE_OCR_BACKEND
     if OCR_ENABLED:
-        if ACTIVE_OCR_BACKEND == 'easyocr':
+        if ACTIVE_OCR_BACKEND == "easyocr":
             if pytesseract is None:
                 logger.warning(
                     "EasyOCR backend cannot run in worker processes and pytesseract is unavailable; "
                     "disabling OCR during scan."
                 )
-                worker_ocr_backend = 'disabled'
+                worker_ocr_backend = "disabled"
             else:
                 logger.info(
                     "Using Tesseract backend in scan workers to avoid EasyOCR subprocess limitations."
                 )
-                worker_ocr_backend = 'tesseract'
-        elif ACTIVE_OCR_BACKEND in (None, 'disabled'):
-            worker_ocr_backend = 'disabled'
+                worker_ocr_backend = "tesseract"
+        elif ACTIVE_OCR_BACKEND in (None, "disabled"):
+            worker_ocr_backend = "disabled"
     else:
-        worker_ocr_backend = 'disabled'
+        worker_ocr_backend = "disabled"
 
     num_processes = CPU_CORES_TO_USE if CPU_CORES_TO_USE is not None else cpu_count()
     print(f"Creating a pool of {num_processes} worker processes. Press Ctrl+C to stop gracefully.")
@@ -1612,7 +1674,15 @@ def scan_videos_parallel(handler):
                     pool.terminate()
                     break
 
-                file_hash, video_path, success, faces_list, ocr_entries, ocr_fragments, error_message = result
+                (
+                    file_hash,
+                    video_path,
+                    success,
+                    faces_list,
+                    ocr_entries,
+                    ocr_fragments,
+                    error_message,
+                ) = result
                 total_processed += 1
 
                 if success:
@@ -1637,13 +1707,25 @@ def scan_videos_parallel(handler):
                         pending_ocr_entries,
                         pending_ocr_fragments,
                     )
-                    pending_faces, pending_files_info, pending_failed_info, pending_ocr_entries, pending_ocr_fragments = [], [], [], [], []
+                    (
+                        pending_faces,
+                        pending_files_info,
+                        pending_failed_info,
+                        pending_ocr_entries,
+                        pending_ocr_fragments,
+                    ) = [], [], [], [], []
         finally:
             pool.close()
             pool.join()
 
     # After the loop (or on shutdown), save any remaining data
-    if pending_faces or pending_files_info or pending_failed_info or pending_ocr_entries or pending_ocr_fragments:
+    if (
+        pending_faces
+        or pending_files_info
+        or pending_failed_info
+        or pending_ocr_entries
+        or pending_ocr_fragments
+    ):
         logger.info("Performing final save...")
         write_data_to_db(
             pending_faces,
@@ -1654,9 +1736,13 @@ def scan_videos_parallel(handler):
         )
 
     # Print summary
-    logger.info(f"Video scanning complete. Processed: {total_processed}, Successful: {total_successful}, Failed: {total_failed}")
+    logger.info(
+        f"Video scanning complete. Processed: {total_processed}, Successful: {total_successful}, Failed: {total_failed}"
+    )
     if total_failed > 0:
-        logger.warning(f"{total_failed} videos failed processing. Check the database for error details.")
+        logger.warning(
+            f"{total_failed} videos failed processing. Check the database for error details."
+        )
 
 
 def classify_new_faces():
@@ -1668,7 +1754,7 @@ def classify_new_faces():
         # Fetch encodings of already named people
         rows = cursor.execute(
             "SELECT person_name, face_encoding FROM faces WHERE person_name IS NOT NULL AND person_name != ?",
-            ("Unknown",)
+            ("Unknown",),
         ).fetchall()
 
         if not rows:
@@ -1713,7 +1799,14 @@ def classify_new_faces():
         updates = []
         clears = []
         candidate_updates = []
-        for face_id, enc_blob, current_suggestion, current_status, current_confidence, cluster_id in rows:
+        for (
+            face_id,
+            enc_blob,
+            current_suggestion,
+            current_status,
+            current_confidence,
+            cluster_id,
+        ) in rows:
             enc = pickle.loads(enc_blob)
             if cluster_id == -1:
                 candidate_updates.append((None, face_id))
@@ -1739,17 +1832,20 @@ def classify_new_faces():
             second_candidate = candidates[1] if len(candidates) > 1 else None
 
             top_candidates_payload = []
-            for cand_name, cand_nearest, _, cand_score, cand_threshold in candidates[:5]:
-                safe_threshold = cand_threshold if cand_threshold and cand_threshold > 0 else base_threshold
-                cand_confidence = max(0.0, min(1.0, 1.0 - (cand_nearest / max(safe_threshold, 1e-6))))
+            for cand_name, cand_nearest, _, _cand_score, cand_threshold in candidates[:5]:
+                safe_threshold = (
+                    cand_threshold if cand_threshold and cand_threshold > 0 else base_threshold
+                )
+                cand_confidence = max(
+                    0.0, min(1.0, 1.0 - (cand_nearest / max(safe_threshold, 1e-6)))
+                )
                 if cand_name == best_name and second_candidate:
                     separation = float(second_candidate[3] - best_score)
                     separation_factor = max(0.0, min(1.0, separation / 0.2))
                     cand_confidence *= max(separation_factor, 0.15)
-                top_candidates_payload.append({
-                    "name": cand_name,
-                    "confidence": round(cand_confidence, 4)
-                })
+                top_candidates_payload.append(
+                    {"name": cand_name, "confidence": round(cand_confidence, 4)}
+                )
 
             candidate_json = json.dumps(top_candidates_payload) if top_candidates_payload else None
             candidate_updates.append((candidate_json, face_id))
@@ -1760,7 +1856,7 @@ def classify_new_faces():
             confidence = top_candidates_payload[0]["confidence"]
 
             # Skip updating if the same suggestion was explicitly rejected
-            if current_status == 'rejected' and current_suggestion == best_name:
+            if current_status == "rejected" and current_suggestion == best_name:
                 continue
 
             accept_suggestion = (
@@ -1774,12 +1870,12 @@ def classify_new_faces():
                     current_suggestion != best_name
                     or current_confidence is None
                     or confidence > (current_confidence or 0)
-                    or current_status not in ('pending', None)
+                    or current_status not in ("pending", None)
                 )
                 if should_update:
-                    updates.append((best_name, confidence, 'pending', candidate_json, face_id))
+                    updates.append((best_name, confidence, "pending", candidate_json, face_id))
             else:
-                if current_status != 'rejected' and (
+                if current_status != "rejected" and (
                     current_suggestion is not None
                     or current_confidence is not None
                     or current_status is not None
@@ -1790,22 +1886,21 @@ def classify_new_faces():
 
         if candidate_updates:
             cursor.executemany(
-                "UPDATE faces SET suggested_candidates = ? WHERE id = ?",
-                candidate_updates
+                "UPDATE faces SET suggested_candidates = ? WHERE id = ?", candidate_updates
             )
             commit_needed = True
 
         if updates:
             cursor.executemany(
                 "UPDATE faces SET suggested_person_name = ?, suggested_confidence = ?, suggestion_status = ?, suggested_candidates = COALESCE(?, suggested_candidates) WHERE id = ?",
-                updates
+                updates,
             )
             commit_needed = True
             print(f"Added high-confidence suggestions for {len(updates)} faces.")
         if clears:
             cursor.executemany(
                 "UPDATE faces SET suggested_person_name = NULL, suggested_confidence = NULL, suggestion_status = NULL WHERE id = ?",
-                clears
+                clears,
             )
             commit_needed = True
             print(f"Cleared low-confidence suggestions for {len(clears)} faces.")
@@ -1851,7 +1946,9 @@ def cluster_faces():
         # Get the highest existing cluster_id to ensure new IDs are unique
         max_cluster_id_result = cursor.execute("SELECT MAX(cluster_id) FROM faces").fetchone()
         next_cluster_id = (
-            max_cluster_id_result[0] + 1 if max_cluster_id_result and max_cluster_id_result[0] is not None else 1
+            max_cluster_id_result[0] + 1
+            if max_cluster_id_result and max_cluster_id_result[0] is not None
+            else 1
         )
 
         print(
@@ -1864,7 +1961,9 @@ def cluster_faces():
             if label == -1:
                 continue
             indices = [i for i, lbl in enumerate(clt.labels_) if lbl == label]
-            existing_ids = [existing_cluster_ids[i] for i in indices if existing_cluster_ids[i] is not None]
+            existing_ids = [
+                existing_cluster_ids[i] for i in indices if existing_cluster_ids[i] is not None
+            ]
             if existing_ids:
                 # Reuse the most common existing cluster_id within this group
                 cluster_id = max(set(existing_ids), key=existing_ids.count)
@@ -1935,7 +2034,9 @@ if __name__ == "__main__":
             continue_ocr_data()
             sys.exit(0)
         else:
-            print("Usage: python scanner.py [retry|cleanup|cleanup_ocr [MIN_LEN]|refresh_ocr [FILE_HASH...]|continue_ocr|ocr_diagnose]")
+            print(
+                "Usage: python scanner.py [retry|cleanup|cleanup_ocr [MIN_LEN]|refresh_ocr [FILE_HASH...]|continue_ocr|ocr_diagnose]"
+            )
             sys.exit(1)
 
     setup_database()

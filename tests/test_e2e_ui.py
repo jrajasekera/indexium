@@ -7,7 +7,7 @@ import time
 from multiprocessing import Process
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 import pytest
 

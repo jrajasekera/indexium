@@ -10,4 +10,3 @@ def test_signal_handler_sets_flag_and_prints(capsys):
 
     assert "Shutdown signal 15 received" in captured.out
     assert handler.shutdown_requested is True
-

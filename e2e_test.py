@@ -83,7 +83,10 @@ def run_pipeline(video_dir: str, work_dir: str) -> None:
         cluster_count = conn.execute(
             "SELECT COUNT(DISTINCT cluster_id) FROM faces WHERE cluster_id IS NOT NULL"
         ).fetchone()[0]
-        video_paths = [row[0] for row in conn.execute("SELECT last_known_filepath FROM scanned_files").fetchall()]
+        video_paths = [
+            row[0]
+            for row in conn.execute("SELECT last_known_filepath FROM scanned_files").fetchall()
+        ]
 
     print(f"Faces: {face_count}")
     print(f"Clusters: {cluster_count}")

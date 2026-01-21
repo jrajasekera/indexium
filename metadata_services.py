@@ -1,4 +1,5 @@
 """Metadata planning and backup services for smart metadata management."""
+
 from __future__ import annotations
 
 import json
@@ -9,22 +10,23 @@ import sqlite3
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 import ffmpeg
 
 
-def _normalize_person_list(names: Iterable[str]) -> List[str]:
+def _normalize_person_list(names: Iterable[str]) -> list[str]:
     """Return a cleaned, sorted, and deduplicated list of person names."""
     cleaned = {name.strip() for name in names if name and name.strip()}
     return sorted(cleaned, key=lambda name: name.lower())
 
 
-def extract_people_from_comment(comment: Optional[str]) -> List[str]:
+def extract_people_from_comment(comment: str | None) -> list[str]:
     """Extract person tags from an ffmpeg comment string."""
     if not comment:
         return []
@@ -40,7 +42,7 @@ def extract_people_from_comment(comment: Optional[str]) -> List[str]:
     if people_segment is None:
         return []
 
-    names = [part.strip() for part in people_segment.split(',')]
+    names = [part.strip() for part in people_segment.split(",")]
     return _normalize_person_list(names)
 
 
@@ -54,36 +56,36 @@ class PlanStatistics:
     total_tags_to_add: int
     will_overwrite_custom: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass(slots=True)
 class PlanItem:
     file_hash: str
-    file_path: Optional[str]
-    file_name: Optional[str]
-    file_extension: Optional[str]
-    db_people: List[str]
-    existing_people: List[str]
-    result_people: List[str]
-    tags_to_add: List[str]
-    tags_to_remove: List[str]
-    existing_comment: Optional[str]
+    file_path: str | None
+    file_name: str | None
+    file_extension: str | None
+    db_people: list[str]
+    existing_people: list[str]
+    result_people: list[str]
+    tags_to_add: list[str]
+    tags_to_remove: list[str]
+    existing_comment: str | None
     result_comment: str
     risk_level: str
     can_update: bool
-    issues: List[str] = field(default_factory=list)
-    probe_error: Optional[str] = None
-    metadata_only_people: List[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    probe_error: str | None = None
+    metadata_only_people: list[str] = field(default_factory=list)
     will_overwrite_comment: bool = False
     overwrites_custom_comment: bool = False
-    issue_codes: List[str] = field(default_factory=list)
+    issue_codes: list[str] = field(default_factory=list)
     tag_count: int = 0
     new_tag_count: int = 0
-    file_modified_time: Optional[float] = None
+    file_modified_time: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["requires_update"] = self.requires_update
         return data
@@ -98,11 +100,11 @@ class PlanItem:
 
 @dataclass(slots=True)
 class MetadataPlan:
-    items: List[PlanItem]
+    items: list[PlanItem]
     statistics: PlanStatistics
-    categories: Dict[str, List[PlanItem]]
+    categories: dict[str, list[PlanItem]]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "items": [item.to_dict() for item in self.items],
             "statistics": self.statistics.to_dict(),
@@ -120,10 +122,10 @@ class BackupRecord:
     file_hash: str
     file_path: str
     backup_timestamp: datetime
-    original_comment: Optional[str]
-    original_metadata_json: Optional[str]
+    original_comment: str | None
+    original_metadata_json: str | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["backup_timestamp"] = self.backup_timestamp.isoformat()
         return data
@@ -135,8 +137,8 @@ class MetadataPlanner:
     def __init__(
         self,
         ffmpeg_module=ffmpeg,
-        database_path: Optional[str] = None,
-        max_workers: Optional[int] = None,
+        database_path: str | None = None,
+        max_workers: int | None = None,
     ):
         self.ffmpeg = ffmpeg_module
         self._ffmpeg_error = getattr(ffmpeg_module, "Error", ffmpeg.Error)
@@ -152,13 +154,13 @@ class MetadataPlanner:
     def generate_plan(
         self,
         conn: sqlite3.Connection,
-        file_hashes: Optional[Sequence[str]] = None,
+        file_hashes: Sequence[str] | None = None,
         include_blocked: bool = True,
     ) -> MetadataPlan:
         query = [
             "SELECT DISTINCT file_hash FROM faces WHERE person_name IS NOT NULL",
         ]
-        params: List[Any] = []
+        params: list[Any] = []
         if file_hashes:
             placeholders = ",".join("?" for _ in file_hashes)
             query.append(f"AND file_hash IN ({placeholders})")
@@ -166,24 +168,19 @@ class MetadataPlanner:
 
         query.append("ORDER BY file_hash")
         rows = conn.execute("\n".join(query), params).fetchall()
-        file_hashes: List[str] = [
-            row[0] if isinstance(row, tuple) else row["file_hash"]
-            for row in rows
+        file_hashes: list[str] = [
+            row[0] if isinstance(row, tuple) else row["file_hash"] for row in rows
         ]
 
-        items: List[PlanItem] = []
+        items: list[PlanItem] = []
 
-        should_parallelize = (
-            self._database_path
-            and len(file_hashes) > 1
-            and self._max_workers > 1
-        )
+        should_parallelize = self._database_path and len(file_hashes) > 1 and self._max_workers > 1
 
         if should_parallelize:
             worker_count = min(self._max_workers, len(file_hashes))
 
-            def _build_with_new_connection(file_hash: str) -> Optional[PlanItem]:
-                local_conn: Optional[sqlite3.Connection] = None
+            def _build_with_new_connection(file_hash: str) -> PlanItem | None:
+                local_conn: sqlite3.Connection | None = None
                 try:
                     local_conn = sqlite3.connect(self._database_path)
                     local_conn.row_factory = sqlite3.Row
@@ -232,8 +229,8 @@ class MetadataPlanner:
             conn.commit()
             self._cache_table_ready = True
 
-    def categorize_items(self, items: Sequence[PlanItem]) -> Dict[str, List[PlanItem]]:
-        buckets: Dict[str, List[PlanItem]] = {
+    def categorize_items(self, items: Sequence[PlanItem]) -> dict[str, list[PlanItem]]:
+        buckets: dict[str, list[PlanItem]] = {
             "safe": [],
             "warning": [],
             "danger": [],
@@ -267,8 +264,8 @@ class MetadataPlanner:
     def filter_items(
         self,
         items: Sequence[PlanItem],
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[PlanItem]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[PlanItem]:
         if not filters:
             return list(items)
 
@@ -276,8 +273,9 @@ class MetadataPlanner:
         risk_levels = filters.get("risk_levels")
         if risk_levels:
             normalized = {level.lower() for level in risk_levels}
+
             def risk_match(plan_item: PlanItem) -> bool:
-                if 'blocked' in normalized and not plan_item.can_update:
+                if "blocked" in normalized and not plan_item.can_update:
                     return True
                 return plan_item.risk_level in normalized
 
@@ -302,15 +300,19 @@ class MetadataPlanner:
         issue_codes = filters.get("issue_codes")
         if issue_codes:
             wanted = {code.lower() for code in issue_codes}
-            filtered = [item for item in filtered if wanted.intersection(code.lower() for code in item.issue_codes)]
-
-        file_types = filters.get("file_types")
-        if file_types:
-            normalized = {ext.lower().lstrip('.') for ext in file_types}
             filtered = [
                 item
                 for item in filtered
-                if item.file_extension and item.file_extension.lower().lstrip('.') in normalized
+                if wanted.intersection(code.lower() for code in item.issue_codes)
+            ]
+
+        file_types = filters.get("file_types")
+        if file_types:
+            normalized = {ext.lower().lstrip(".") for ext in file_types}
+            filtered = [
+                item
+                for item in filtered
+                if item.file_extension and item.file_extension.lower().lstrip(".") in normalized
             ]
 
         search = (filters.get("search") or "").strip().lower()
@@ -328,9 +330,9 @@ class MetadataPlanner:
     def sort_items(
         self,
         items: Sequence[PlanItem],
-        sort_by: Optional[str] = None,
+        sort_by: str | None = None,
         direction: str = "asc",
-    ) -> List[PlanItem]:
+    ) -> list[PlanItem]:
         if not sort_by:
             return list(items)
 
@@ -345,9 +347,17 @@ class MetadataPlanner:
             }.get(level, 0)
 
         if sort_by == "risk":
-            return sorted(items, key=lambda item: (risk_priority(item.risk_level), item.file_name or item.file_hash), reverse=reverse)
+            return sorted(
+                items,
+                key=lambda item: (risk_priority(item.risk_level), item.file_name or item.file_hash),
+                reverse=reverse,
+            )
         if sort_by == "tag_count":
-            return sorted(items, key=lambda item: (item.tag_count, item.file_name or item.file_hash), reverse=reverse)
+            return sorted(
+                items,
+                key=lambda item: (item.tag_count, item.file_name or item.file_hash),
+                reverse=reverse,
+            )
         if sort_by == "modified":
             return sorted(
                 items,
@@ -368,7 +378,9 @@ class MetadataPlanner:
 
         tags_to_add = sorted(set(result_people) - set(item.existing_people), key=str.lower)
         tags_to_remove = sorted(set(item.existing_people) - set(result_people), key=str.lower)
-        metadata_only_people = sorted(set(item.existing_people) - set(item.db_people), key=str.lower)
+        metadata_only_people = sorted(
+            set(item.existing_people) - set(item.db_people), key=str.lower
+        )
 
         issues = list(item.issues)
         issue_codes = list(item.issue_codes)
@@ -430,10 +442,10 @@ class MetadataPlanner:
         file_extension = Path(file_path).suffix if file_path else None
         can_update = bool(file_path and Path(file_path).exists())
 
-        existing_comment: Optional[str] = None
-        existing_people: List[str] = []
-        probe_error: Optional[str] = None
-        file_modified_time: Optional[float] = None
+        existing_comment: str | None = None
+        existing_people: list[str] = []
+        probe_error: str | None = None
+        file_modified_time: float | None = None
 
         cache_valid = False
         if can_update:
@@ -449,8 +461,12 @@ class MetadataPlanner:
             ).fetchone()
 
             if cache_row is not None:
-                cached_comment = cache_row[0] if isinstance(cache_row, tuple) else cache_row["comment"]
-                cached_mtime = cache_row[1] if isinstance(cache_row, tuple) else cache_row["file_mtime"]
+                cached_comment = (
+                    cache_row[0] if isinstance(cache_row, tuple) else cache_row["comment"]
+                )
+                cached_mtime = (
+                    cache_row[1] if isinstance(cache_row, tuple) else cache_row["file_mtime"]
+                )
                 if (
                     file_modified_time is not None
                     and cached_mtime is not None
@@ -467,14 +483,14 @@ class MetadataPlanner:
             if not cache_valid:
                 try:
                     probe = self.ffmpeg.probe(file_path)
-                    existing_comment = (
-                        probe.get("format", {})
-                        .get("tags", {})
-                        .get("comment")
-                    )
+                    existing_comment = probe.get("format", {}).get("tags", {}).get("comment")
                     existing_people = extract_people_from_comment(existing_comment)
-                except self._ffmpeg_error as exc:  # pragma: no cover - exercised in integration scenarios
-                    probe_error = exc.stderr.decode("utf8") if getattr(exc, "stderr", None) else str(exc)
+                except (
+                    self._ffmpeg_error
+                ) as exc:  # pragma: no cover - exercised in integration scenarios
+                    probe_error = (
+                        exc.stderr.decode("utf8") if getattr(exc, "stderr", None) else str(exc)
+                    )
                     existing_comment = ""
                     existing_people = []
                 except Exception as exc:  # pragma: no cover - defensive fallback
@@ -502,7 +518,9 @@ class MetadataPlanner:
                     )
                     conn.commit()
                 except Exception:  # pragma: no cover - cache writes are best-effort
-                    self._logger.exception("Failed updating metadata comment cache for %s", file_hash)
+                    self._logger.exception(
+                        "Failed updating metadata comment cache for %s", file_hash
+                    )
 
         result_people = _normalize_person_list(list(set(db_people).union(existing_people)))
         metadata_only_people = sorted(set(existing_people) - set(db_people), key=str.lower)
@@ -512,9 +530,7 @@ class MetadataPlanner:
 
         existing_comment_value = (existing_comment or "").strip()
         will_overwrite_comment = (
-            can_update
-            and bool(existing_comment_value)
-            and existing_comment_value != result_comment
+            can_update and bool(existing_comment_value) and existing_comment_value != result_comment
         )
         overwrites_custom_comment = bool(
             can_update
@@ -524,8 +540,8 @@ class MetadataPlanner:
         )
 
         risk_level = "safe"
-        issues: List[str] = []
-        issue_codes: List[str] = []
+        issues: list[str] = []
+        issue_codes: list[str] = []
         if not can_update:
             risk_level = "danger"
             issues.append("Video file path is unavailable")
@@ -674,11 +690,11 @@ class _OperationRuntime:
     """In-memory control block for an active metadata write operation."""
 
     operation_id: int
-    items: List[PlanItem]
-    item_ids: List[int]
+    items: list[PlanItem]
+    item_ids: list[int]
     pause_event: threading.Event
     cancel_event: threading.Event
-    thread: Optional[threading.Thread] = None
+    thread: threading.Thread | None = None
 
 
 class MetadataWriter:
@@ -688,18 +704,18 @@ class MetadataWriter:
         self,
         database_path: str,
         ffmpeg_module=ffmpeg,
-        backup_manager: Optional[BackupManager] = None,
+        backup_manager: BackupManager | None = None,
     ) -> None:
         self.database_path = database_path
         self.ffmpeg = ffmpeg_module
         self.backup_manager = backup_manager or BackupManager(ffmpeg_module=ffmpeg_module)
         self._lock = threading.Lock()
-        self._operations: Dict[int, _OperationRuntime] = {}
+        self._operations: dict[int, _OperationRuntime] = {}
 
     def start_operation(
         self,
         items: Sequence[PlanItem],
-        options: Optional[WriteOptions] = None,
+        options: WriteOptions | None = None,
         background: bool = True,
     ) -> int:
         """Create a metadata operation and dispatch background processing."""
@@ -721,7 +737,7 @@ class MetadataWriter:
             )
             operation_id = cursor.lastrowid
 
-            item_ids: List[int] = []
+            item_ids: list[int] = []
             for plan_item in items:
                 cursor.execute(
                     """
@@ -752,7 +768,9 @@ class MetadataWriter:
 
             conn.commit()
 
-        runnable_ids = [item_id for item, item_id in zip(items, item_ids) if item.can_update]
+        runnable_ids = [
+            item_id for item, item_id in zip(items, item_ids, strict=False) if item.can_update
+        ]
         runtime = _OperationRuntime(
             operation_id=operation_id,
             items=list(runnable_items),
@@ -807,7 +825,7 @@ class MetadataWriter:
         self._update_operation_status(operation_id, "cancelling")
         return True
 
-    def get_operation_status(self, operation_id: int) -> Optional[Dict[str, Any]]:
+    def get_operation_status(self, operation_id: int) -> dict[str, Any] | None:
         with sqlite3.connect(self.database_path) as conn:
             conn.row_factory = sqlite3.Row
             op_row = conn.execute(
@@ -829,54 +847,54 @@ class MetadataWriter:
             ).fetchall()
 
         totals = {
-            'success': 0,
-            'failed': 0,
-            'pending': 0,
-            'skipped': 0,
+            "success": 0,
+            "failed": 0,
+            "pending": 0,
+            "skipped": 0,
         }
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for row in item_rows:
-            status = row['status']
-            if status == 'success':
-                totals['success'] += 1
-            elif status == 'failed':
-                totals['failed'] += 1
-            elif status == 'skipped':
-                totals['skipped'] += 1
+            status = row["status"]
+            if status == "success":
+                totals["success"] += 1
+            elif status == "failed":
+                totals["failed"] += 1
+            elif status == "skipped":
+                totals["skipped"] += 1
             else:
-                totals['pending'] += 1
+                totals["pending"] += 1
 
             items.append(
                 {
-                    'id': row['id'],
-                    'file_hash': row['file_hash'],
-                    'file_path': row['file_path'],
-                    'file_name': os.path.basename(row['file_path'] or row['file_hash']),
-                    'status': status,
-                    'error_message': row['error_message'],
-                    'processed_at': row['processed_at'],
-                    'tags_added': json.loads(row['tags_added'] or '[]'),
-                    'tags_removed': json.loads(row['tags_removed'] or '[]'),
+                    "id": row["id"],
+                    "file_hash": row["file_hash"],
+                    "file_path": row["file_path"],
+                    "file_name": os.path.basename(row["file_path"] or row["file_hash"]),
+                    "status": status,
+                    "error_message": row["error_message"],
+                    "processed_at": row["processed_at"],
+                    "tags_added": json.loads(row["tags_added"] or "[]"),
+                    "tags_removed": json.loads(row["tags_removed"] or "[]"),
                 }
             )
 
-        file_count = op_row['file_count'] or max(1, len(items))
-        completed = totals['success'] + totals['failed'] + totals['skipped']
+        file_count = op_row["file_count"] or max(1, len(items))
+        completed = totals["success"] + totals["failed"] + totals["skipped"]
         progress = completed / file_count if file_count else 1.0
 
         return {
-            'operation_id': operation_id,
-            'status': op_row['status'],
-            'file_count': file_count,
-            'success_count': op_row['success_count'],
-            'failure_count': op_row['failure_count'],
-            'pending_count': totals['pending'],
-            'skipped_count': totals['skipped'],
-            'error_message': op_row['error_message'],
-            'started_at': op_row['started_at'],
-            'completed_at': op_row['completed_at'],
-            'progress': progress,
-            'items': items,
+            "operation_id": operation_id,
+            "status": op_row["status"],
+            "file_count": file_count,
+            "success_count": op_row["success_count"],
+            "failure_count": op_row["failure_count"],
+            "pending_count": totals["pending"],
+            "skipped_count": totals["skipped"],
+            "error_message": op_row["error_message"],
+            "started_at": op_row["started_at"],
+            "completed_at": op_row["completed_at"],
+            "progress": progress,
+            "items": items,
         }
 
     # ------------------------------------------------------------------
@@ -894,13 +912,13 @@ class MetadataWriter:
 
         try:
             processed_ids: set[int] = set()
-            for plan_item, item_id in zip(runtime.items, runtime.item_ids):
+            for plan_item, item_id in zip(runtime.items, runtime.item_ids, strict=False):
                 runtime.pause_event.wait()
                 if runtime.cancel_event.is_set():
                     break
 
                 try:
-                    self._mark_item_status(item_id, 'in_progress')
+                    self._mark_item_status(item_id, "in_progress")
                     if options.dry_run:
                         time.sleep(0)
                     else:
@@ -923,9 +941,9 @@ class MetadataWriter:
                                 (pending_id,),
                             )
                             conn.commit()
-                self._update_operation_status(operation_id, 'cancelled')
+                self._update_operation_status(operation_id, "cancelled")
             else:
-                self._update_operation_status(operation_id, 'completed')
+                self._update_operation_status(operation_id, "completed")
         finally:
             with self._lock:
                 self._operations.pop(operation_id, None)
@@ -990,9 +1008,15 @@ class MetadataWriter:
                 self.backup_manager.create_backup(conn, item.file_hash, item.file_path, item_id)
 
         stream = self.ffmpeg.input(item.file_path)
-        metadata_value = item.result_comment if options.overwrite_existing else item.existing_comment or item.result_comment
-        metadata_arg = f"comment={metadata_value}" if isinstance(metadata_value, str) else metadata_value
-        stream = self.ffmpeg.output(stream, temp_path, c='copy', metadata=metadata_arg)
+        metadata_value = (
+            item.result_comment
+            if options.overwrite_existing
+            else item.existing_comment or item.result_comment
+        )
+        metadata_arg = (
+            f"comment={metadata_value}" if isinstance(metadata_value, str) else metadata_value
+        )
+        stream = self.ffmpeg.output(stream, temp_path, c="copy", metadata=metadata_arg)
 
         try:
             self.ffmpeg.run(stream, overwrite_output=True, quiet=True)
@@ -1019,35 +1043,35 @@ class HistoryService:
 
     def get_operations(
         self,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         page: int = 1,
         per_page: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         filters = filters or {}
         page = max(1, page)
         per_page = max(1, per_page)
 
         conditions = []
-        params: List[Any] = []
+        params: list[Any] = []
 
-        statuses = filters.get('status')
+        statuses = filters.get("status")
         if statuses:
-            placeholders = ','.join('?' for _ in statuses)
+            placeholders = ",".join("?" for _ in statuses)
             conditions.append(f"status IN ({placeholders})")
             params.extend(statuses)
 
-        start_date = filters.get('start_date')
+        start_date = filters.get("start_date")
         if start_date:
             conditions.append("date(started_at) >= date(?)")
             params.append(start_date)
 
-        end_date = filters.get('end_date')
+        end_date = filters.get("end_date")
         if end_date:
             conditions.append("date(started_at) <= date(?)")
             params.append(end_date)
 
-        search = filters.get('search')
-        search_join = ''
+        search = filters.get("search")
+        search_join = ""
         if search:
             search_join = "LEFT JOIN metadata_operation_items moi ON moi.operation_id = mo.id"
             like = f"%{search.lower()}%"
@@ -1056,7 +1080,7 @@ class HistoryService:
             )
             params.extend([like, like, like])
 
-        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ''
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         with sqlite3.connect(self.database_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -1082,16 +1106,16 @@ class HistoryService:
         total_pages = max(1, math.ceil(total / per_page)) if per_page else 1
 
         return {
-            'operations': operations,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total_items': total,
-                'total_pages': total_pages,
+            "operations": operations,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total_items": total,
+                "total_pages": total_pages,
             },
         }
 
-    def get_operation_details(self, operation_id: int) -> Optional[Dict[str, Any]]:
+    def get_operation_details(self, operation_id: int) -> dict[str, Any] | None:
         with sqlite3.connect(self.database_path) as conn:
             conn.row_factory = sqlite3.Row
             op_row = conn.execute(
@@ -1113,11 +1137,11 @@ class HistoryService:
             ).fetchall()
 
         return {
-            'operation': self._row_to_operation_summary(op_row),
-            'items': [self._row_to_item_detail(row) for row in item_rows],
+            "operation": self._row_to_operation_summary(op_row),
+            "items": [self._row_to_item_detail(row) for row in item_rows],
         }
 
-    def rollback_operation(self, operation_id: int) -> Dict[str, Any]:
+    def rollback_operation(self, operation_id: int) -> dict[str, Any]:
         with sqlite3.connect(self.database_path) as conn:
             conn.row_factory = sqlite3.Row
             op_row = conn.execute(
@@ -1127,7 +1151,7 @@ class HistoryService:
             if not op_row:
                 raise ValueError("Operation not found")
 
-            if op_row['status'] not in {'completed', 'failed', 'cancelled', 'rolled_back'}:
+            if op_row["status"] not in {"completed", "failed", "cancelled", "rolled_back"}:
                 raise ValueError("Operation is still running; pause or cancel before rolling back")
 
             item_rows = conn.execute(
@@ -1140,7 +1164,7 @@ class HistoryService:
 
         with sqlite3.connect(self.database_path) as conn:
             for row in item_rows:
-                item_id = row['id']
+                item_id = row["id"]
                 try:
                     success = self.backup_manager.restore_backup(conn, item_id)
                 except Exception as exc:  # noqa: BLE001
@@ -1170,36 +1194,36 @@ class HistoryService:
             conn.commit()
 
         return {
-            'operation_id': operation_id,
-            'restored': restored,
-            'failed': failed,
+            "operation_id": operation_id,
+            "restored": restored,
+            "failed": failed,
         }
 
-    def _row_to_operation_summary(self, row: sqlite3.Row) -> Dict[str, Any]:
+    def _row_to_operation_summary(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
-            'id': row['id'],
-            'operation_type': row['operation_type'],
-            'status': row['status'],
-            'started_at': row['started_at'],
-            'completed_at': row['completed_at'],
-            'file_count': row['file_count'],
-            'success_count': row['success_count'],
-            'failure_count': row['failure_count'],
-            'error_message': row['error_message'],
-            'user_note': row['user_note'],
+            "id": row["id"],
+            "operation_type": row["operation_type"],
+            "status": row["status"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "file_count": row["file_count"],
+            "success_count": row["success_count"],
+            "failure_count": row["failure_count"],
+            "error_message": row["error_message"],
+            "user_note": row["user_note"],
         }
 
-    def _row_to_item_detail(self, row: sqlite3.Row) -> Dict[str, Any]:
+    def _row_to_item_detail(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
-            'id': row['id'],
-            'file_hash': row['file_hash'],
-            'file_path': row['file_path'],
-            'status': row['status'],
-            'previous_comment': row['previous_comment'],
-            'new_comment': row['new_comment'],
-            'tags_added': json.loads(row['tags_added'] or '[]'),
-            'tags_removed': json.loads(row['tags_removed'] or '[]'),
-            'error_message': row['error_message'],
-            'processed_at': row['processed_at'],
-            'backup_timestamp': row['backup_timestamp'],
+            "id": row["id"],
+            "file_hash": row["file_hash"],
+            "file_path": row["file_path"],
+            "status": row["status"],
+            "previous_comment": row["previous_comment"],
+            "new_comment": row["new_comment"],
+            "tags_added": json.loads(row["tags_added"] or "[]"),
+            "tags_removed": json.loads(row["tags_removed"] or "[]"),
+            "error_message": row["error_message"],
+            "processed_at": row["processed_at"],
+            "backup_timestamp": row["backup_timestamp"],
         }
