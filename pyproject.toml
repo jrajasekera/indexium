@@ -21,5 +21,29 @@ dependencies = [
     "playwright>=1.57.0",
 ]
 
+[project.optional-dependencies]
+dev = ["ruff>=0.8.0"]
+
 [tool.uv.sources]
 face-recognition-models = { git = "https://github.com/ageitgey/face_recognition_models" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
