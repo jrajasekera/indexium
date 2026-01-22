@@ -53,3 +53,16 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 - Required tools: ffmpeg (includes ffprobe), OpenCV/dlib system deps (see README).
 - For OCR: EasyOCR (preferred) or Tesseract as fallback.
 - Key env vars: `INDEXIUM_VIDEO_DIR`, `INDEXIUM_DB`, `FLASK_DEBUG`, `INDEXIUM_OCR_ENABLED`, `INDEXIUM_OCR_ENGINE`.
+
+## Manual UI Testing with Playwright
+
+To verify UI changes, use Playwright MCP tools to interact with the running app.
+
+1. **Check if app is running**: `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5001/ || echo "not running"`
+2. **Start app in background (if needed)**: `python app.py &` — track whether you started it
+3. **Navigate and interact** using Playwright MCP tools:
+   - `browser_navigate` — go to a URL (e.g., `http://127.0.0.1:5001/videos/manual`)
+   - `browser_snapshot` — capture accessibility snapshot for page structure and element refs
+   - `browser_take_screenshot` — visual screenshot to verify layout/styling
+   - `browser_click`, `browser_type`, `browser_fill_form` — interact with elements
+4. **Shut down app (if you started it)**: `pkill -f "python app.py"`
