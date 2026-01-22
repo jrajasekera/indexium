@@ -241,3 +241,341 @@ def test_history_service_rollback_restores_files(tmp_path, monkeypatch):
     assert details["operation"]["status"] == "rolled_back"
     assert any(item["status"] == "rolled_back" for item in details["items"])
     assert stub_ffmpeg._comment_map.get(str(video_path)) in {plan_item.existing_comment or "", None}
+
+
+# --- Additional tests for filter_items ---
+
+
+def test_filter_items_requires_update(tmp_path, monkeypatch):
+    """Should filter by requires_update field."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video1 = tmp_path / "video1.mp4"
+    video1.write_text("v1")
+    video2 = tmp_path / "video2.mp4"
+    video2.write_text("v2")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video1)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h2", str(video2)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Bob"),
+    )
+    conn.commit()
+
+    # video1 has matching comment, video2 doesn't
+    stub = StubFFmpeg({str(video1): "People: Alice", str(video2): ""})
+    planner = metadata_services.MetadataPlanner(ffmpeg_module=stub)
+    plan = planner.generate_plan(conn)
+
+    # Filter for items that require update
+    filtered = planner.filter_items(plan.items, {"requires_update": True})
+    assert len(filtered) == 1
+    assert filtered[0].file_hash == "h2"
+
+    # Filter for items that don't require update
+    no_update = planner.filter_items(plan.items, {"requires_update": False})
+    assert len(no_update) == 1
+    assert no_update[0].file_hash == "h1"
+
+
+def test_filter_items_can_update(tmp_path, monkeypatch):
+    """Should filter by can_update field."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video1 = tmp_path / "video1.mp4"
+    video1.write_text("v1")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video1)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h2", str(tmp_path / "missing.mp4")),  # Missing file
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Bob"),
+    )
+    conn.commit()
+
+    stub = StubFFmpeg({str(video1): ""})
+    planner = metadata_services.MetadataPlanner(ffmpeg_module=stub)
+    plan = planner.generate_plan(conn)
+
+    # Filter for items that can be updated
+    can_update = planner.filter_items(plan.items, {"can_update": True})
+    assert len(can_update) == 1
+    assert can_update[0].file_hash == "h1"
+
+    # Filter for items that cannot be updated
+    cannot_update = planner.filter_items(plan.items, {"can_update": False})
+    assert len(cannot_update) == 1
+    assert cannot_update[0].file_hash == "h2"
+
+
+def test_filter_items_search(tmp_path, monkeypatch):
+    """Should filter by search string matching file name, people, or hash."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video1 = tmp_path / "conference_recording.mp4"
+    video1.write_text("v1")
+    video2 = tmp_path / "birthday_party.mp4"
+    video2.write_text("v2")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("confhash", str(video1)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("birthhash", str(video2)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("confhash", 0, "0,0,0,0", enc, 1, "Alice Smith"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("birthhash", 0, "0,0,0,0", enc, 2, "Bob Jones"),
+    )
+    conn.commit()
+
+    stub = StubFFmpeg({str(video1): "", str(video2): ""})
+    planner = metadata_services.MetadataPlanner(ffmpeg_module=stub)
+    plan = planner.generate_plan(conn)
+
+    # Search by file name
+    by_name = planner.filter_items(plan.items, {"search": "conference"})
+    assert len(by_name) == 1
+    assert by_name[0].file_hash == "confhash"
+
+    # Search by person name
+    by_person = planner.filter_items(plan.items, {"search": "alice"})
+    assert len(by_person) == 1
+    assert by_person[0].file_hash == "confhash"
+
+    # Search by hash
+    by_hash = planner.filter_items(plan.items, {"search": "birth"})
+    assert len(by_hash) == 1
+    assert by_hash[0].file_hash == "birthhash"
+
+
+# --- Additional tests for sort_items ---
+
+
+def test_sort_items_by_tag_count(tmp_path, monkeypatch):
+    """Should sort by tag count."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video1 = tmp_path / "video1.mp4"
+    video1.write_text("v1")
+    video2 = tmp_path / "video2.mp4"
+    video2.write_text("v2")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video1)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h2", str(video2)),
+    )
+    # h1 has 1 person
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    # h2 has 2 people
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Bob"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 1, "0,0,0,0", enc, 3, "Carol"),
+    )
+    conn.commit()
+
+    stub = StubFFmpeg({str(video1): "", str(video2): ""})
+    planner = metadata_services.MetadataPlanner(ffmpeg_module=stub)
+    plan = planner.generate_plan(conn)
+
+    # Sort ascending
+    sorted_asc = planner.sort_items(plan.items, sort_by="tag_count", direction="asc")
+    assert sorted_asc[0].tag_count <= sorted_asc[1].tag_count
+
+    # Sort descending
+    sorted_desc = planner.sort_items(plan.items, sort_by="tag_count", direction="desc")
+    assert sorted_desc[0].tag_count >= sorted_desc[1].tag_count
+
+
+def test_sort_items_by_modified(tmp_path, monkeypatch):
+    """Should sort by file modification time."""
+    import time
+
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video1 = tmp_path / "video1.mp4"
+    video1.write_text("v1")
+    time.sleep(0.1)  # Ensure different mtime
+    video2 = tmp_path / "video2.mp4"
+    video2.write_text("v2")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video1)),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h2", str(video2)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Bob"),
+    )
+    conn.commit()
+
+    stub = StubFFmpeg({str(video1): "", str(video2): ""})
+    planner = metadata_services.MetadataPlanner(ffmpeg_module=stub)
+    plan = planner.generate_plan(conn)
+
+    # Sort ascending (oldest first)
+    sorted_asc = planner.sort_items(plan.items, sort_by="modified", direction="asc")
+    assert sorted_asc[0].file_hash == "h1"
+
+    # Sort descending (newest first)
+    sorted_desc = planner.sort_items(plan.items, sort_by="modified", direction="desc")
+    assert sorted_desc[0].file_hash == "h2"
+
+
+# --- Tests for HistoryService with filters ---
+
+
+def test_get_operations_with_status_filter(tmp_path, monkeypatch):
+    """Should filter operations by status."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    stub_ffmpeg = StubFFmpeg({})
+
+    # Create an operation
+    plan_item, _ = _create_plan_item(tmp_path, db_path, monkeypatch, stub_ffmpeg)
+    writer = metadata_services.MetadataWriter(
+        database_path=str(db_path),
+        ffmpeg_module=stub_ffmpeg,
+        backup_manager=metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg),
+    )
+    operation_id = writer.start_operation(
+        [plan_item], metadata_services.WriteOptions(), background=False
+    )
+
+    history_service = metadata_services.HistoryService(
+        str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg)
+    )
+
+    # Filter by completed status
+    completed = history_service.get_operations(filters={"status": ["completed"]})
+    assert any(op["id"] == operation_id for op in completed["operations"])
+
+    # Filter by pending status (should not include our completed operation)
+    pending = history_service.get_operations(filters={"status": ["pending"]})
+    assert not any(op["id"] == operation_id for op in pending["operations"])
+
+
+def test_get_operations_with_date_filter(tmp_path, monkeypatch):
+    """Should filter operations by date range."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    stub_ffmpeg = StubFFmpeg({})
+
+    plan_item, _ = _create_plan_item(tmp_path, db_path, monkeypatch, stub_ffmpeg)
+    writer = metadata_services.MetadataWriter(
+        database_path=str(db_path),
+        ffmpeg_module=stub_ffmpeg,
+        backup_manager=metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg),
+    )
+    writer.start_operation([plan_item], metadata_services.WriteOptions(), background=False)
+
+    history_service = metadata_services.HistoryService(
+        str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg)
+    )
+
+    from datetime import date, timedelta
+
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+
+    # Filter starting from today should include our operation
+    today_ops = history_service.get_operations(filters={"start_date": today})
+    assert today_ops["pagination"]["total_items"] >= 1
+
+    # Filter ending yesterday should not include our operation
+    old_ops = history_service.get_operations(filters={"end_date": yesterday})
+    # The test creates a new operation today, so it shouldn't be in results ending yesterday
+    assert old_ops["pagination"]["total_items"] == 0
+
+
+def test_rollback_invalid_operation(tmp_path, monkeypatch):
+    """Should raise error when rollback on non-existent operation."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+    stub_ffmpeg = StubFFmpeg({})
+
+    history_service = metadata_services.HistoryService(
+        str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg)
+    )
+
+    import pytest
+    with pytest.raises(ValueError, match="Operation not found"):
+        history_service.rollback_operation(99999)
+
+
+def test_rollback_running_operation(tmp_path, monkeypatch):
+    """Should raise error when trying to rollback a running operation."""
+    db_path = _setup_test_database(tmp_path, monkeypatch)
+
+    # Manually create a pending operation
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO metadata_operations (operation_type, status) VALUES (?, ?)",
+        ("write", "pending"),
+    )
+    operation_id = conn.execute("SELECT MAX(id) FROM metadata_operations").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    stub_ffmpeg = StubFFmpeg({})
+    history_service = metadata_services.HistoryService(
+        str(db_path), metadata_services.BackupManager(ffmpeg_module=stub_ffmpeg)
+    )
+
+    import pytest
+    with pytest.raises(ValueError, match="still running"):
+        history_service.rollback_operation(operation_id)
