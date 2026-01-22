@@ -4,20 +4,22 @@
 <div class="max-w-6xl mx-auto space-y-8">
     <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-            <a href="{{ url_for('manual_video_dashboard') }}" class="btn btn-sm btn-ghost mb-2">← Back to list</a>
-            <h1 class="text-3xl font-bold text-base-content">{{ video.name or "Manual Video" }}</h1>
-            <div class="flex flex-wrap items-center gap-3 mt-2 text-sm text-base-content/70">
+            <a href="{{ url_for('manual_video_dashboard') }}" class="btn btn-sm btn-ghost mb-2">← Back</a>
+            <h1 class="text-xl sm:text-2xl md:text-3xl font-bold text-base-content break-all sm:break-normal">{{ video.name or "Manual Video" }}</h1>
+            <div class="flex flex-wrap items-center gap-2 sm:gap-3 mt-2 text-xs sm:text-sm text-base-content/70">
                 <span>Status: <span class="font-semibold capitalize">{{ video.status.replace('_', ' ') }}</span></span>
                 <span>Tags: <span class="font-semibold">{{ video.tag_count }}</span></span>
                 <span>Text: <span class="font-semibold">{{ video.ocr_text_count }}</span></span>
-                {% if video.path %}<span>Source: <span class="font-semibold">{{ video.path }}</span></span>{% endif %}
             </div>
+            {% if video.path %}
+            <p class="text-xs text-base-content/60 mt-1 truncate max-w-full hidden sm:block" title="{{ video.path }}">{{ video.path }}</p>
+            {% endif %}
             {% if video.missing %}
-            <div class="badge badge-error mt-3">Original file is missing</div>
+            <div class="badge badge-error badge-sm mt-2">Original file missing</div>
             {% endif %}
         </div>
         <div class="flex flex-wrap gap-2">
-            <a href="{{ url_for('manual_video_next') }}" class="btn btn-outline">Next Pending</a>
+            <a href="{{ url_for('manual_video_next') }}" class="btn btn-outline btn-sm sm:btn-md">Next Pending</a>
         </div>
     </div>
 
@@ -35,7 +37,7 @@
                         </form>
                     </div>
                     {% if sample_images %}
-                    <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4" id="manual-sample-grid">
+                    <div class="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4" id="manual-sample-grid">
                         {% for image in sample_images %}
                         <button type="button"
                                 class="overflow-hidden rounded-xl border border-base-300 focus:outline-none focus:ring-2 focus:ring-primary"
@@ -161,9 +163,9 @@
                                 placeholder="Start typing a name"
                                 autocomplete="off"
                             >
-                            <div class="flex flex-wrap gap-2">
-                                <button type="submit" name="submit_action" value="add" class="btn btn-primary">Add</button>
-                                <button type="submit" name="submit_action" value="add_and_done" class="btn btn-success">Add and Mark Done</button>
+                            <div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
+                                <button type="submit" name="submit_action" value="add" class="btn btn-primary btn-sm sm:btn-md">Add</button>
+                                <button type="submit" name="submit_action" value="add_and_done" class="btn btn-success btn-sm sm:btn-md"><span class="hidden sm:inline">Add and </span>Done</button>
                             </div>
                         </div>
                         <datalist id="detail-known-people">
@@ -174,7 +176,7 @@
                         {% if auto_suggested_person and not focus_person %}
                         <p class="text-xs text-primary/80">Suggested: {{ auto_suggested_person }}{% if auto_suggested_source %} (from {{ auto_suggested_source|replace('_', ' ') }}){% endif %}</p>
                         {% endif %}
-                        <p class="text-xs text-base-content/60">Type a name and press enter or click Add. Existing names appear below; new names will be created.</p>
+                        <p class="text-xs text-base-content/60 hidden sm:block">Type a name and press enter or click Add. Existing names appear below; new names will be created.</p>
                     </form>
                 </div>
             </div>
@@ -204,21 +206,21 @@
 </div>
 
 <div id="frame-lightbox" class="fixed inset-0 z-50 hidden bg-base-300/80 backdrop-blur-sm">
-    <div class="flex h-full w-full items-center justify-center p-4">
-        <div id="frame-lightbox-content" class="relative max-h-full w-full max-w-5xl rounded-3xl bg-base-100 shadow-2xl border border-base-300">
-            <button type="button" id="frame-lightbox-close" class="btn btn-sm btn-circle btn-ghost bg-base-200/80 hover:bg-base-200 border border-base-300 shadow absolute -right-3 -top-3" aria-label="Close preview">
+    <div class="flex h-full w-full items-center justify-center p-2 sm:p-4">
+        <div id="frame-lightbox-content" class="relative max-h-full w-full max-w-5xl rounded-2xl sm:rounded-3xl bg-base-100 shadow-2xl border border-base-300">
+            <button type="button" id="frame-lightbox-close" class="btn btn-sm btn-circle btn-ghost bg-base-200/80 hover:bg-base-200 border border-base-300 shadow absolute right-2 top-2 sm:-right-3 sm:-top-3" aria-label="Close preview">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
-            <div class="p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <button type="button" id="frame-lightbox-prev" class="btn btn-outline" aria-label="Previous frame">← Previous</button>
-                    <span id="frame-lightbox-caption" class="text-sm text-base-content/70"></span>
-                    <button type="button" id="frame-lightbox-next" class="btn btn-outline" aria-label="Next frame">Next →</button>
+            <div class="p-3 sm:p-6">
+                <div class="flex items-center justify-between mb-3 sm:mb-4">
+                    <button type="button" id="frame-lightbox-prev" class="btn btn-outline btn-sm sm:btn-md" aria-label="Previous frame"><span class="hidden sm:inline">← </span>Prev</button>
+                    <span id="frame-lightbox-caption" class="text-xs sm:text-sm text-base-content/70"></span>
+                    <button type="button" id="frame-lightbox-next" class="btn btn-outline btn-sm sm:btn-md" aria-label="Next frame">Next<span class="hidden sm:inline"> →</span></button>
                 </div>
                 <div class="flex justify-center">
-                    <img id="frame-lightbox-image" src="" alt="Selected video frame" class="max-h-[70vh] w-auto rounded-xl border border-base-300 shadow-lg">
+                    <img id="frame-lightbox-image" src="" alt="Selected video frame" class="max-h-[60vh] sm:max-h-[70vh] w-auto rounded-lg sm:rounded-xl border border-base-300 shadow-lg">
                 </div>
             </div>
         </div>
