@@ -132,3 +132,32 @@ Key environment variables (see `config.py` for full list):
 - Check `tests/conftest.py` for shared fixtures
 - E2E test (`e2e_test.py`) runs full pipeline with isolated temp directory
 - Test files: `test_app.py`, `test_scanner.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_config.py`, `test_util.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`
+
+## Manual UI Testing with Playwright
+
+To manually verify UI changes, use the Playwright MCP tools to interact with the running app.
+
+### 1. Check if the app is running
+```bash
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5001/ || echo "not running"
+```
+
+### 2. Start the app in background (if not running)
+```bash
+python app.py &
+```
+Note: Track whether you started the app so you know to shut it down later.
+
+### 3. Navigate and interact using Playwright MCP tools
+- `browser_navigate` - Navigate to a URL (e.g., `http://127.0.0.1:5001/videos/manual`)
+- `browser_snapshot` - Capture accessibility snapshot to see page structure and element refs
+- `browser_take_screenshot` - Take a visual screenshot to verify layout/styling
+- `browser_click` - Click elements using refs from snapshot
+- `browser_type` - Type into input fields
+- `browser_fill_form` - Fill multiple form fields at once
+
+### 4. Shut down the app (if you started it)
+```bash
+pkill -f "python app.py"
+```
+Only kill the app if you were the one who started it in step 2.
