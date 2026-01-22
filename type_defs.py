@@ -275,4 +275,4 @@ class PlanItemDict(TypedDict, total=False):
 
 def row_to_dict(row: Row) -> dict[str, object]:
     """Convert an sqlite3.Row to a dictionary."""
-    return dict(zip(row.keys(), row))
+    return dict(zip(row.keys(), row, strict=False))

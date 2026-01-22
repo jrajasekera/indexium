@@ -4,7 +4,7 @@ import json
 import pickle
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 

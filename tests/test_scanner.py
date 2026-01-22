@@ -5,15 +5,14 @@ import shutil
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 if TYPE_CHECKING:
-    from _pytest.monkeypatch import MonkeyPatch
+    pass
 
 import scanner as scanner_module
 from text_utils import calculate_top_text_fragments
@@ -609,7 +608,9 @@ def test_store_fragments_empty_list(tmp_path, monkeypatch):
     scanner_module._store_fragments(cursor, "hash1", [])
     conn.commit()
 
-    rows = cursor.execute("SELECT * FROM video_text_fragments WHERE file_hash = ?", ("hash1",)).fetchall()
+    rows = cursor.execute(
+        "SELECT * FROM video_text_fragments WHERE file_hash = ?", ("hash1",)
+    ).fetchall()
     assert len(rows) == 0
 
 
@@ -679,7 +680,9 @@ def test_update_ocr_counts_updates_count(tmp_path, monkeypatch):
     scanner_module._update_ocr_counts(cursor, ["hash1"])
     conn.commit()
 
-    count = cursor.execute("SELECT ocr_text_count FROM scanned_files WHERE file_hash = ?", ("hash1",)).fetchone()[0]
+    count = cursor.execute(
+        "SELECT ocr_text_count FROM scanned_files WHERE file_hash = ?", ("hash1",)
+    ).fetchone()[0]
     assert count == 2
 
 
@@ -698,7 +701,9 @@ def test_update_ocr_counts_zero_count(tmp_path, monkeypatch):
     scanner_module._update_ocr_counts(cursor, ["hash1"])
     conn.commit()
 
-    row = cursor.execute("SELECT ocr_text_count, ocr_last_updated FROM scanned_files WHERE file_hash = ?", ("hash1",)).fetchone()
+    row = cursor.execute(
+        "SELECT ocr_text_count, ocr_last_updated FROM scanned_files WHERE file_hash = ?", ("hash1",)
+    ).fetchone()
     assert row[0] == 0
     # Timestamp should remain unchanged since count is 0
     assert row[1] == "2024-01-01 00:00:00"
@@ -817,7 +822,9 @@ def test_validate_video_file_ffmpeg_error(monkeypatch):
 
 def test_validate_video_file_generic_exception(monkeypatch):
     """Generic exception should return False with error message."""
-    monkeypatch.setattr(scanner_module.ffmpeg, "probe", MagicMock(side_effect=ValueError("Unexpected error")))
+    monkeypatch.setattr(
+        scanner_module.ffmpeg, "probe", MagicMock(side_effect=ValueError("Unexpected error"))
+    )
 
     is_valid, err_msg = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
@@ -949,7 +956,9 @@ def test_write_data_to_db_with_failed_files(tmp_path, monkeypatch):
     )
 
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT processing_status, error_message FROM scanned_files WHERE file_hash = 'hash1'").fetchone()
+    row = conn.execute(
+        "SELECT processing_status, error_message FROM scanned_files WHERE file_hash = 'hash1'"
+    ).fetchone()
     assert row[0] == "failed"
     assert "test failure" in row[1]
 
@@ -993,11 +1002,15 @@ def test_persist_ocr_results_success(tmp_path, monkeypatch):
     assert result is True
 
     # Verify OCR entries were inserted
-    count = conn.execute("SELECT COUNT(*) FROM video_text WHERE file_hash = 'testhash'").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM video_text WHERE file_hash = 'testhash'").fetchone()[
+        0
+    ]
     assert count == 2
 
     # Verify count was updated
-    ocr_count = conn.execute("SELECT ocr_text_count FROM scanned_files WHERE file_hash = 'testhash'").fetchone()[0]
+    ocr_count = conn.execute(
+        "SELECT ocr_text_count FROM scanned_files WHERE file_hash = 'testhash'"
+    ).fetchone()[0]
     assert ocr_count == 2
 
 
@@ -1014,7 +1027,9 @@ def test_persist_ocr_results_empty_entries(tmp_path, monkeypatch):
     result = scanner_module._persist_ocr_results("emptyhash", [], [])
     assert result is True
 
-    count = conn.execute("SELECT ocr_text_count FROM scanned_files WHERE file_hash = 'emptyhash'").fetchone()[0]
+    count = conn.execute(
+        "SELECT ocr_text_count FROM scanned_files WHERE file_hash = 'emptyhash'"
+    ).fetchone()[0]
     assert count == 0
 
 
@@ -1033,7 +1048,9 @@ def test_persist_ocr_results_replaces_existing(tmp_path, monkeypatch):
     conn.commit()
 
     # Verify old entry exists
-    old_count = conn.execute("SELECT COUNT(*) FROM video_text WHERE file_hash = 'replacehash'").fetchone()[0]
+    old_count = conn.execute(
+        "SELECT COUNT(*) FROM video_text WHERE file_hash = 'replacehash'"
+    ).fetchone()[0]
     assert old_count == 1
 
     new_entries = [
@@ -1051,7 +1068,9 @@ def test_persist_ocr_results_replaces_existing(tmp_path, monkeypatch):
     assert result is True
 
     # Old entry should be deleted, new one should exist
-    rows = conn.execute("SELECT raw_text FROM video_text WHERE file_hash = 'replacehash'").fetchall()
+    rows = conn.execute(
+        "SELECT raw_text FROM video_text WHERE file_hash = 'replacehash'"
+    ).fetchall()
     assert len(rows) == 1
     assert rows[0][0] == "New Text"
 
@@ -1076,6 +1095,7 @@ def test_get_file_hash_with_path(tmp_path, monkeypatch):
 
 def test_validate_video_file_ffprobe_exception(monkeypatch):
     """validate_video_file should handle ffprobe throwing general exceptions."""
+
     def raise_exception(path, **kwargs):
         raise RuntimeError("Unexpected error during probe")
 

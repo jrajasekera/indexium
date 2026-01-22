@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from types import FrameType
-from typing import Any
-
-import pytest
 from _pytest.capture import CaptureFixture
 
 from signal_handler import SignalHandler

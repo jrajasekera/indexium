@@ -8,14 +8,14 @@ import socket
 import time
 from multiprocessing import Process
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 import pytest
 
 if TYPE_CHECKING:
-    from _pytest.monkeypatch import MonkeyPatch
+    pass
 
 
 def _find_free_port() -> int:

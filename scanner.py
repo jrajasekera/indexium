@@ -13,9 +13,6 @@ import sqlite3
 from multiprocessing import Pool, cpu_count
 from typing import Any
 
-import numpy as np
-import numpy.typing as npt
-
 import cv2
 import face_recognition
 import ffmpeg
@@ -1302,10 +1299,12 @@ def process_video_job(job_data):
 
                         try:
                             face_locations = face_recognition.face_locations(
-                                rgb_frame, model=config.FACE_DETECTION_MODEL  # type: ignore[arg-type]
+                                rgb_frame,
+                                model=config.FACE_DETECTION_MODEL,  # type: ignore[arg-type]
                             )
                             face_encodings = face_recognition.face_encodings(
-                                rgb_frame, face_locations  # type: ignore[arg-type]
+                                rgb_frame,
+                                face_locations,  # type: ignore[arg-type]
                             )
 
                             for location, encoding in zip(
