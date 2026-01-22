@@ -168,7 +168,7 @@
                 transform: translateX(-100%);
             }
 
-            .sidebar.collapsed {
+            .sidebar.sidebar-visible {
                 transform: translateX(0);
             }
 
@@ -370,6 +370,33 @@
             border: 1px solid var(--border-subtle) !important;
             border-radius: 12px !important;
         }
+
+        /* Mobile responsiveness */
+        @media (max-width: 640px) {
+            .modal-box {
+                width: calc(100% - 2rem) !important;
+                max-width: none !important;
+                margin: 1rem !important;
+            }
+
+            .modal-action {
+                flex-direction: column !important;
+                gap: 0.5rem !important;
+            }
+
+            .modal-action .btn {
+                width: 100% !important;
+            }
+
+            /* Ensure minimum touch target size */
+            .btn {
+                min-height: 44px !important;
+            }
+
+            .btn-sm {
+                min-height: 36px !important;
+            }
+        }
     </style>
 </head>
 <body class="bg-base-200 text-base-content">
@@ -434,10 +461,22 @@
                 </div>
 
                 <div class="navbar-center">
-                    <div class="flex items-center gap-6 text-sm">
-                        <span class="text-base-content/60">People <span class="text-base-content font-medium ml-1">{{ stats.named_people_count }}</span></span>
-                        <span class="text-base-content/60">Groups <span class="text-base-content font-medium ml-1">{{ stats.unnamed_groups_count }}</span></span>
-                        <span class="text-base-content/60">Pending <span class="text-base-content font-medium ml-1">{{ stats.manual_pending_videos }}</span></span>
+                    <div class="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm">
+                        <span class="text-base-content/60">
+                            <span class="hidden sm:inline">People</span>
+                            <span class="sm:hidden">P</span>
+                            <span class="text-base-content font-medium ml-1">{{ stats.named_people_count }}</span>
+                        </span>
+                        <span class="text-base-content/60">
+                            <span class="hidden sm:inline">Groups</span>
+                            <span class="sm:hidden">G</span>
+                            <span class="text-base-content font-medium ml-1">{{ stats.unnamed_groups_count }}</span>
+                        </span>
+                        <span class="text-base-content/60">
+                            <span class="hidden sm:inline">Pending</span>
+                            <span class="sm:hidden">!</span>
+                            <span class="text-base-content font-medium ml-1">{{ stats.manual_pending_videos }}</span>
+                        </span>
                     </div>
                 </div>
 
@@ -452,7 +491,7 @@
         </header>
 
         <!-- Page Content -->
-        <main class="p-6">
+        <main class="p-3 sm:p-4 md:p-6">
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     <div class="toast toast-top toast-end z-50">
@@ -490,10 +529,14 @@
 
         const applySidebarLayout = (isLargeScreen) => {
             if (isLargeScreen) {
+                // Desktop: sidebar always visible via default CSS, no special classes needed
                 sidebar.classList.remove('collapsed');
+                sidebar.classList.remove('sidebar-visible');
                 mainContent.classList.add('sidebar-open');
             } else {
-                sidebar.classList.add('collapsed');
+                // Mobile: sidebar hidden by default, no classes needed (CSS handles it)
+                sidebar.classList.remove('collapsed');
+                sidebar.classList.remove('sidebar-visible');
                 mainContent.classList.remove('sidebar-open');
             }
         };
@@ -502,11 +545,22 @@
         largeScreenQuery.addEventListener('change', (event) => applySidebarLayout(event.matches));
 
         sidebarToggle.addEventListener('click', () => {
-            const isCollapsed = sidebar.classList.toggle('collapsed');
-            if (isCollapsed) {
-                mainContent.classList.remove('sidebar-open');
+            if (largeScreenQuery.matches) {
+                // Desktop: toggle collapsed state
+                const isCollapsed = sidebar.classList.toggle('collapsed');
+                if (isCollapsed) {
+                    mainContent.classList.remove('sidebar-open');
+                } else {
+                    mainContent.classList.add('sidebar-open');
+                }
             } else {
-                mainContent.classList.add('sidebar-open');
+                // Mobile: toggle sidebar-visible class
+                const isVisible = sidebar.classList.toggle('sidebar-visible');
+                if (isVisible) {
+                    mainContent.classList.add('sidebar-open');
+                } else {
+                    mainContent.classList.remove('sidebar-open');
+                }
             }
         });
 
@@ -515,7 +569,7 @@
                 const clickedToggle = sidebarToggle.contains(event.target);
                 const clickedSidebar = sidebar.contains(event.target);
                 if (!clickedToggle && !clickedSidebar) {
-                    sidebar.classList.add('collapsed');
+                    sidebar.classList.remove('sidebar-visible');
                     mainContent.classList.remove('sidebar-open');
                 }
             }
