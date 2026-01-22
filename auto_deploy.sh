@@ -93,8 +93,12 @@ rotate_logs() {
     for log_file in "${log_files[@]}"; do
         if [[ -f "$log_file" ]]; then
             local file_mtime
-            # macOS uses -f %m, Linux uses -c %Y
-            file_mtime=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo "$current_time")
+            # Linux uses -c %Y, macOS uses -f %m (try Linux first to avoid GNU stat output on Linux)
+            file_mtime=$(stat -c %Y "$log_file" 2>/dev/null || stat -f %m "$log_file" 2>/dev/null || echo "$current_time")
+            if [[ ! "$file_mtime" =~ ^[0-9]+$ ]]; then
+                log_warn "Invalid mtime for $(basename "$log_file"); using current time"
+                file_mtime="$current_time"
+            fi
 
             local age=$((current_time - file_mtime))
 
