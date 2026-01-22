@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import hashlib
 import os
 
 
-def get_file_hash(filepath, block_size=65536):
+def get_file_hash(filepath: str, block_size: int = 65536) -> str | None:
     """Calculates the SHA256 hash of a file to uniquely identify it.
     Uses the first 10 blocks and last 10 blocks for a better representation
     while maintaining performance."""

@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import pickle
 import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 import metadata_services
 import scanner as scanner_module
@@ -238,6 +244,7 @@ def test_history_service_rollback_restores_files(tmp_path, monkeypatch):
     assert result["restored"] >= 1
 
     details = history_service.get_operation_details(operation_id)
+    assert details is not None
     assert details["operation"]["status"] == "rolled_back"
     assert any(item["status"] == "rolled_back" for item in details["items"])
     assert stub_ffmpeg._comment_map.get(str(video_path)) in {plan_item.existing_comment or "", None}

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import multiprocessing as mp
@@ -10,6 +12,9 @@ import signal
 import sqlite3
 from multiprocessing import Pool, cpu_count
 from typing import Any
+
+import numpy as np
+import numpy.typing as npt
 
 import cv2
 import face_recognition
@@ -81,7 +86,7 @@ def _record_ocr_text(
     frame_index: int,
     timestamp_ms: int | None,
     confidence: float | None,
-):
+) -> None:
     """Merge a normalized OCR string into the aggregator respecting limits."""
     if not cleaned_text:
         return
@@ -117,7 +122,7 @@ def _record_ocr_text(
 
 def _easyocr_probe_worker(queue_obj, languages, use_gpu):  # pragma: no cover - subprocess helper
     try:
-        easyocr.Reader(list(languages), gpu=use_gpu)
+        easyocr.Reader(list(languages), gpu=use_gpu)  # type: ignore[union-attr]
         queue_obj.put(("ok", None))
     except Exception as exc:  # noqa: BLE001
         queue_obj.put(("error", str(exc)))
@@ -129,7 +134,7 @@ def _easyocr_worker_loop(
     request_q, response_q, languages, use_gpu
 ):  # pragma: no cover - subprocess helper
     try:
-        reader = easyocr.Reader(list(languages), gpu=use_gpu)
+        reader = easyocr.Reader(list(languages), gpu=use_gpu)  # type: ignore[union-attr]
     except Exception as exc:  # noqa: BLE001
         response_q.put(("error", str(exc)))
         response_q.close()
@@ -266,6 +271,7 @@ def _easyocr_request(frame: np.ndarray):
             return None
         worker = _easyocr_worker
 
+    assert worker is not None
     process, request_q, response_q = worker
 
     try:
@@ -327,7 +333,7 @@ def diagnose_ocr_environment():
     logger.info("--- End OCR Diagnostics ---")
 
 
-def _store_fragments(cursor, file_hash: str, fragments: list[dict[str, Any]]):
+def _store_fragments(cursor: Any, file_hash: str, fragments: list[dict[str, Any]]):
     cursor.execute("DELETE FROM video_text_fragments WHERE file_hash = ?", (file_hash,))
     if not fragments:
         return
@@ -385,7 +391,7 @@ def _recompute_fragments(cursor, file_hash: str):
     )
     entries = [(row[0], row[1]) for row in cursor.fetchall() if row[0]]
     fragments = calculate_top_text_fragments(entries, TOP_FRAGMENT_COUNT, MIN_OCR_TEXT_LENGTH)
-    _store_fragments(cursor, file_hash, fragments)
+    _store_fragments(cursor, file_hash, list(fragments))  # type: ignore[arg-type]
 
 
 def cleanup_ocr_text(min_length: int | None = None):
@@ -603,7 +609,7 @@ def get_ocr_reader():
                 ",".join(config.OCR_LANGUAGES),
                 config.OCR_USE_GPU,
             )
-            _ocr_reader = easyocr.Reader(list(config.OCR_LANGUAGES), gpu=config.OCR_USE_GPU)
+            _ocr_reader = easyocr.Reader(list(config.OCR_LANGUAGES), gpu=config.OCR_USE_GPU)  # type: ignore[union-attr]
         except Exception as exc:  # pragma: no cover - hardware/env specific
             logger.error("Failed to initialize EasyOCR reader: %s", exc)
             OCR_ENABLED = False
@@ -612,7 +618,7 @@ def get_ocr_reader():
     return _ocr_reader
 
 
-def _normalize_ocr_text(text: str) -> str | None:
+def _normalize_ocr_text(text: str | None) -> str | None:
     """Clean whitespace and validate text length for OCR results."""
     if not text:
         return None
@@ -624,7 +630,7 @@ def _normalize_ocr_text(text: str) -> str | None:
     return cleaned
 
 
-def _timestamp_ms_for_frame(frame_index: int, fps: float) -> int | None:
+def _timestamp_ms_for_frame(frame_index: int, fps: float | None) -> int | None:
     """Convert a frame index to milliseconds using FPS when available."""
     if not fps or fps <= 0:
         return None
@@ -1296,10 +1302,10 @@ def process_video_job(job_data):
 
                         try:
                             face_locations = face_recognition.face_locations(
-                                rgb_frame, model=config.FACE_DETECTION_MODEL
+                                rgb_frame, model=config.FACE_DETECTION_MODEL  # type: ignore[arg-type]
                             )
                             face_encodings = face_recognition.face_encodings(
-                                rgb_frame, face_locations
+                                rgb_frame, face_locations  # type: ignore[arg-type]
                             )
 
                             for location, encoding in zip(

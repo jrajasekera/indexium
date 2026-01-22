@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import math
 import os
@@ -10,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Any
 
 import cv2
 import ffmpeg
@@ -71,7 +74,7 @@ if config.MANUAL_VIDEO_REVIEW_ENABLED and config.MANUAL_REVIEW_WARMUP_ENABLED:
     _manual_warmup_executor = ThreadPoolExecutor(max_workers=worker_count)
 
 _known_people_cache_lock = threading.Lock()
-_known_people_cache: dict[str, object] = {
+_known_people_cache: dict[str, Any] = {
     "timestamp": 0.0,
     "names": [],
     "prepared": [],
@@ -79,7 +82,7 @@ _known_people_cache: dict[str, object] = {
 }
 
 
-def get_db_connection():
+def get_db_connection() -> sqlite3.Connection:
     """Gets a per-request database connection."""
     if "db" not in g:
         g.db = sqlite3.connect(config.DATABASE_FILE)
@@ -88,7 +91,7 @@ def get_db_connection():
 
 
 @app.teardown_appcontext
-def close_db_connection(exception):
+def close_db_connection(exception: BaseException | None) -> None:
     """Closes the database connection at the end of the request."""
     db = g.pop("db", None)
     if db is not None:
@@ -103,7 +106,7 @@ SAMPLE_MAX_HEIGHT = 360
 MIN_TEXT_FRAGMENT_LENGTH = max(MIN_FRAGMENT_LENGTH, config.OCR_MIN_TEXT_LENGTH)
 
 
-def _load_known_people_cache(conn) -> dict[str, object]:
+def _load_known_people_cache(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return cached known people data, refreshing it if stale."""
     now = time.monotonic()
     cache_ttl = max(float(config.MANUAL_KNOWN_PEOPLE_CACHE_SECONDS or 0), 0.0)
@@ -120,7 +123,7 @@ def _load_known_people_cache(conn) -> dict[str, object]:
         ):
             return _known_people_cache
 
-    names = {
+    names: set[str] = {
         row[0]
         for row in conn.execute(
             "SELECT DISTINCT person_name FROM faces WHERE person_name IS NOT NULL"
@@ -130,15 +133,15 @@ def _load_known_people_cache(conn) -> dict[str, object]:
         row[0] for row in conn.execute("SELECT DISTINCT person_name FROM video_people").fetchall()
     )
 
-    sorted_names = sorted(names, key=lambda name: name.lower())
-    prepared = []
+    sorted_names: list[str] = sorted(names, key=lambda name: name.lower())
+    prepared: list[tuple[str, str, list[str]]] = []
     for name in sorted_names:
         normalized = _normalize_match_text(name)
         if not normalized or normalized == "unknown":
             continue
         prepared.append((name, normalized, normalized.split()))
 
-    refreshed = {
+    refreshed: dict[str, Any] = {
         "timestamp": now,
         "names": sorted_names,
         "prepared": prepared,
@@ -151,7 +154,7 @@ def _load_known_people_cache(conn) -> dict[str, object]:
     return _known_people_cache
 
 
-def _invalidate_known_people_cache():
+def _invalidate_known_people_cache() -> None:
     """Clear the cached known people data."""
     with _known_people_cache_lock:
         _known_people_cache["timestamp"] = 0.0
@@ -188,14 +191,14 @@ def _schedule_manual_video_warmup(next_hash: str | None) -> None:
     _manual_warmup_executor.submit(_enqueue)
 
 
-def _manual_feature_guard():
+def _manual_feature_guard() -> None:
     """Abort with 404 if manual video review is disabled."""
     if not config.MANUAL_VIDEO_REVIEW_ENABLED:
         abort(404)
 
 
-def _manual_status_sort_key(status):
-    order = {
+def _manual_status_sort_key(status: str | None) -> int:
+    order: dict[str | None, int] = {
         "pending": 0,
         "in_progress": 1,
         "done": 2,
@@ -211,7 +214,9 @@ def _resolve_sample_dir(file_hash: str) -> Path:
     return Path(config.NO_FACE_SAMPLE_DIR) / file_hash
 
 
-def _ensure_sample_seed(conn, file_hash: str, regenerate: bool = False) -> int | None:
+def _ensure_sample_seed(
+    conn: sqlite3.Connection, file_hash: str, regenerate: bool = False
+) -> int | None:
     """Get or create the deterministic sampling seed for a video."""
     row = conn.execute(
         "SELECT sample_seed FROM scanned_files WHERE file_hash = ?",
@@ -219,7 +224,7 @@ def _ensure_sample_seed(conn, file_hash: str, regenerate: bool = False) -> int |
     ).fetchone()
     if not row:
         return None
-    seed = row["sample_seed"]
+    seed: int | None = row["sample_seed"]
     if regenerate or seed is None:
         seed = secrets.randbits(32)
         conn.execute(
@@ -230,7 +235,7 @@ def _ensure_sample_seed(conn, file_hash: str, regenerate: bool = False) -> int |
     return seed
 
 
-def _resize_frame_for_sample(frame):
+def _resize_frame_for_sample(frame: Any) -> Any:
     """Resize frames for display while keeping aspect ratio."""
     height, width = frame.shape[:2]
     if not height or not width:
@@ -296,7 +301,7 @@ def _generate_video_samples(
 
 
 def _get_video_samples(
-    conn, file_hash: str, regenerate: bool = False
+    conn: sqlite3.Connection, file_hash: str, regenerate: bool = False
 ) -> tuple[list[Path], str | None]:
     """Ensure sample frames exist for a video and return them with the source path."""
     row = conn.execute(
@@ -306,7 +311,7 @@ def _get_video_samples(
     if not row:
         return [], None
 
-    video_path = row["last_known_filepath"]
+    video_path: str | None = row["last_known_filepath"]
     if not video_path or not os.path.exists(video_path):
         return [], video_path
 
@@ -340,7 +345,7 @@ def _get_video_samples(
     return generated, video_path
 
 
-def _collect_known_people(conn) -> list[str]:
+def _collect_known_people(conn: sqlite3.Connection) -> list[str]:
     """Return a sorted list of known people names from cache or database."""
     cache = _load_known_people_cache(conn)
     return list(cache["names"])
@@ -420,7 +425,7 @@ def _suggest_manual_person_name(
     return None, None, None
 
 
-def _get_manual_video_record(conn, file_hash: str):
+def _get_manual_video_record(conn: sqlite3.Connection, file_hash: str) -> sqlite3.Row:
     """Fetch a manual-review candidate row or abort if missing."""
     row = conn.execute(
         """
@@ -442,7 +447,9 @@ def _get_manual_video_record(conn, file_hash: str):
     return row
 
 
-def _get_next_manual_video(conn, exclude_hash: str | None = None) -> str | None:
+def _get_next_manual_video(
+    conn: sqlite3.Connection, exclude_hash: str | None = None
+) -> str | None:
     """Return the next manual-review video hash, optionally skipping current."""
     query = [
         """
@@ -465,7 +472,7 @@ def _get_next_manual_video(conn, exclude_hash: str | None = None) -> str | None:
     return row["file_hash"] if row else None
 
 
-def _serialize_plan_item(item: PlanItem) -> dict[str, object]:
+def _serialize_plan_item(item: PlanItem) -> dict[str, Any]:
     """Convert a plan item to the dict shape expected by the planner UI."""
     data = item.to_dict()
     data["name"] = item.file_name
@@ -473,7 +480,9 @@ def _serialize_plan_item(item: PlanItem) -> dict[str, object]:
     return data
 
 
-def build_metadata_plan(conn, target_hashes=None):
+def build_metadata_plan(
+    conn: sqlite3.Connection, target_hashes: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Builds a per-file plan summarizing pending metadata writes."""
     plan = _metadata_planner.generate_plan(
         conn,
@@ -1335,7 +1344,7 @@ def manual_video_add_tags(file_hash):
                 redirect_args = {"file_hash": next_manual_hash}
                 if focus_person:
                     redirect_args["focus_person"] = focus_person
-                mark_done_redirect = url_for("manual_video_detail", **redirect_args)
+                mark_done_redirect = url_for("manual_video_detail", **redirect_args)  # type: ignore[arg-type]
             else:
                 flash("Great job! No more videos need manual tagging right now.", "info")
                 mark_done_redirect = url_for("manual_video_dashboard")
@@ -1436,7 +1445,7 @@ def manual_video_update_status(file_hash):
         redirect_args = {"file_hash": next_hash}
         if focus_person:
             redirect_args["focus_person"] = focus_person
-        return redirect(url_for("manual_video_detail", **redirect_args))
+        return redirect(url_for("manual_video_detail", **redirect_args))  # type: ignore[arg-type]
 
     flash("Great job! No more videos need manual tagging right now.", "info")
     return redirect(url_for("manual_video_dashboard"))
