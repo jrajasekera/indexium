@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import shutil
 import sqlite3
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Generator
 
 import pytest
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 
 @pytest.fixture(autouse=True)

@@ -1,16 +1,22 @@
+from __future__ import annotations
+
 import json
 import pickle
 import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 import app as app_module
 import scanner as scanner_module
 from text_utils import calculate_top_text_fragments
 
 
-def setup_app_db(tmp_path, monkeypatch):
+def setup_app_db(tmp_path: Path, monkeypatch: MonkeyPatch) -> Path:
     db_path = tmp_path / "app.db"
     monkeypatch.setattr(scanner_module.config, "DATABASE_FILE", str(db_path))
     monkeypatch.setattr(scanner_module, "DATABASE_FILE", str(db_path))

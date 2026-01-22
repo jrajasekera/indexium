@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 import pickle
 import shutil
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 import scanner as scanner_module
 from text_utils import calculate_top_text_fragments
@@ -751,6 +758,7 @@ def test_validate_video_file_zero_duration(monkeypatch):
 
     is_valid, error = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert error is not None
     assert "zero or negative duration" in error
 
 
@@ -764,6 +772,7 @@ def test_validate_video_file_negative_duration(monkeypatch):
 
     is_valid, error = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert error is not None
     assert "zero or negative duration" in error
 
 
@@ -777,6 +786,7 @@ def test_validate_video_file_no_video_streams(monkeypatch):
 
     is_valid, error = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert error is not None
     assert "No video streams found" in error
 
 
@@ -790,16 +800,18 @@ def test_validate_video_file_corrupted_stream(monkeypatch):
 
     is_valid, error = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert error is not None
     assert "Corrupted video stream" in error
 
 
 def test_validate_video_file_ffmpeg_error(monkeypatch):
     """FFmpeg error should return False with error message."""
-    error = scanner_module.ffmpeg.Error("ffmpeg", "stdout", b"Error decoding file")
+    error = scanner_module.ffmpeg.Error("ffmpeg", b"stdout", b"Error decoding file")
     monkeypatch.setattr(scanner_module.ffmpeg, "probe", MagicMock(side_effect=error))
 
     is_valid, err_msg = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert err_msg is not None
     assert "FFprobe error" in err_msg
 
 
@@ -809,6 +821,7 @@ def test_validate_video_file_generic_exception(monkeypatch):
 
     is_valid, err_msg = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert err_msg is not None
     assert "Validation error" in err_msg
 
 
@@ -1070,4 +1083,5 @@ def test_validate_video_file_ffprobe_exception(monkeypatch):
 
     is_valid, error = scanner_module.validate_video_file("/fake/video.mp4")
     assert is_valid is False
+    assert error is not None
     assert "Validation error" in error

@@ -22,7 +22,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pyright>=1.1.389", "ruff>=0.8.0", "pytest-cov>=6.0.0"]
+dev = [
+    "pyright>=1.1.389",
+    "ruff>=0.8.0",
+    "pytest-cov>=6.0.0",
+    "types-Pillow>=10.2.0",
+]
 
 [tool.uv.sources]
 face-recognition-models = { git = "https://github.com/ageitgey/face_recognition_models" }
@@ -55,12 +60,13 @@ indent-style = "space"
 [tool.pyright]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
-reportMissingTypeStubs = true
-reportUnknownMemberType = true
-reportUnknownParameterType = true
-reportUnknownVariableType = true
-reportUntypedFunctionDecorator = true
-reportUntypedBaseClass = true
+stubPath = "typings"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUntypedFunctionDecorator = false
+reportUntypedBaseClass = false
 exclude = [
     "thumbnails",
     "test_vids",

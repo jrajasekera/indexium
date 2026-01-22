@@ -136,7 +136,7 @@ class MetadataPlanner:
 
     def __init__(
         self,
-        ffmpeg_module=ffmpeg,
+        ffmpeg_module: Any = ffmpeg,
         database_path: str | None = None,
         max_workers: int | None = None,
     ):
@@ -168,20 +168,21 @@ class MetadataPlanner:
 
         query.append("ORDER BY file_hash")
         rows = conn.execute("\n".join(query), params).fetchall()
-        file_hashes: list[str] = [
+        target_hashes: list[str] = [
             row[0] if isinstance(row, tuple) else row["file_hash"] for row in rows
         ]
 
         items: list[PlanItem] = []
 
-        should_parallelize = self._database_path and len(file_hashes) > 1 and self._max_workers > 1
+        should_parallelize = self._database_path and len(target_hashes) > 1 and self._max_workers > 1
 
         if should_parallelize:
-            worker_count = min(self._max_workers, len(file_hashes))
+            worker_count = min(self._max_workers, len(target_hashes))
 
             def _build_with_new_connection(file_hash: str) -> PlanItem | None:
                 local_conn: sqlite3.Connection | None = None
                 try:
+                    assert self._database_path is not None
                     local_conn = sqlite3.connect(self._database_path)
                     local_conn.row_factory = sqlite3.Row
                     return self._build_plan_item(local_conn, file_hash)
@@ -193,13 +194,13 @@ class MetadataPlanner:
                         local_conn.close()
 
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                for item in executor.map(_build_with_new_connection, file_hashes, chunksize=1):
+                for item in executor.map(_build_with_new_connection, target_hashes, chunksize=1):
                     if item is None:
                         continue
                     if include_blocked or item.can_update:
                         items.append(item)
         else:
-            for file_hash in file_hashes:
+            for file_hash in target_hashes:
                 item = self._build_plan_item(conn, file_hash)
                 if include_blocked or item.can_update:
                     items.append(item)
@@ -449,6 +450,7 @@ class MetadataPlanner:
 
         cache_valid = False
         if can_update:
+            assert file_path is not None  # can_update implies file_path exists
             self._ensure_comment_cache_table(conn)
             try:
                 file_modified_time = os.path.getmtime(file_path)
@@ -591,7 +593,7 @@ class MetadataPlanner:
 class BackupManager:
     """Service for capturing and restoring video metadata backups."""
 
-    def __init__(self, ffmpeg_module=ffmpeg):
+    def __init__(self, ffmpeg_module: Any = ffmpeg):
         self.ffmpeg = ffmpeg_module
 
     def create_backup(
@@ -703,7 +705,7 @@ class MetadataWriter:
     def __init__(
         self,
         database_path: str,
-        ffmpeg_module=ffmpeg,
+        ffmpeg_module: Any = ffmpeg,
         backup_manager: BackupManager | None = None,
     ) -> None:
         self.database_path = database_path
@@ -736,6 +738,7 @@ class MetadataWriter:
                 ("write", "pending", len(items)),
             )
             operation_id = cursor.lastrowid
+            assert operation_id is not None, "INSERT must return a lastrowid"
 
             item_ids: list[int] = []
             for plan_item in items:
@@ -764,7 +767,9 @@ class MetadataWriter:
                         json.dumps(plan_item.tags_to_remove),
                     ),
                 )
-                item_ids.append(cursor.lastrowid)
+                item_id = cursor.lastrowid
+                assert item_id is not None, "INSERT must return a lastrowid"
+                item_ids.append(item_id)
 
             conn.commit()
 
