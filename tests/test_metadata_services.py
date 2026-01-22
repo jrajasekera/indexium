@@ -3,12 +3,12 @@ from __future__ import annotations
 import pickle
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from _pytest.monkeypatch import MonkeyPatch
+    pass
 
 import metadata_services
 import scanner as scanner_module
@@ -538,7 +538,6 @@ def test_get_operations_with_date_filter(tmp_path, monkeypatch):
 
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
 
     # Filter starting from today should include our operation
     today_ops = history_service.get_operations(filters={"start_date": today})
@@ -560,6 +559,7 @@ def test_rollback_invalid_operation(tmp_path, monkeypatch):
     )
 
     import pytest
+
     with pytest.raises(ValueError, match="Operation not found"):
         history_service.rollback_operation(99999)
 
@@ -584,5 +584,6 @@ def test_rollback_running_operation(tmp_path, monkeypatch):
     )
 
     import pytest
+
     with pytest.raises(ValueError, match="still running"):
         history_service.rollback_operation(operation_id)

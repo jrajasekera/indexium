@@ -3,12 +3,12 @@ from __future__ import annotations
 import pickle
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from _pytest.monkeypatch import MonkeyPatch
+    pass
 
 import metadata_services
 import scanner as scanner_module

@@ -174,7 +174,9 @@ class MetadataPlanner:
 
         items: list[PlanItem] = []
 
-        should_parallelize = self._database_path and len(target_hashes) > 1 and self._max_workers > 1
+        should_parallelize = (
+            self._database_path and len(target_hashes) > 1 and self._max_workers > 1
+        )
 
         if should_parallelize:
             worker_count = min(self._max_workers, len(target_hashes))

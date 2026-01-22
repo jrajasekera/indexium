@@ -447,9 +447,7 @@ def _get_manual_video_record(conn: sqlite3.Connection, file_hash: str) -> sqlite
     return row
 
 
-def _get_next_manual_video(
-    conn: sqlite3.Connection, exclude_hash: str | None = None
-) -> str | None:
+def _get_next_manual_video(conn: sqlite3.Connection, exclude_hash: str | None = None) -> str | None:
     """Return the next manual-review video hash, optionally skipping current."""
     query = [
         """
@@ -576,7 +574,7 @@ def api_edit_metadata_plan_item(file_hash):
     result_people = payload.get("result_people", [])
     if isinstance(result_people, str):
         result_people = [result_people]
-    if not isinstance(result_people, (list, tuple)):
+    if not isinstance(result_people, list | tuple):
         abort(400, description="result_people must be a list of names")
 
     conn = get_db_connection()
