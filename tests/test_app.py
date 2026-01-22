@@ -1052,3 +1052,583 @@ def test_metadata_operation_status_endpoint(tmp_path, monkeypatch):
 
         resp = client.post("/api/metadata/operations/5/cancel")
         assert resp.status_code == 200
+
+
+# --- Tests for get_face_thumbnail route ---
+
+
+def test_get_face_thumbnail_found(tmp_path, monkeypatch):
+    """Should return thumbnail when file exists."""
+    setup_app_db(tmp_path, monkeypatch)
+    thumb_dir = Path(app_module.config.THUMBNAIL_DIR)
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    (thumb_dir / "123.jpg").write_bytes(b"fake image data")
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/face_thumbnail/123")
+        assert resp.status_code == 200
+        assert resp.content_type == "image/jpeg"
+
+
+def test_get_face_thumbnail_not_found(tmp_path, monkeypatch):
+    """Should return 404 when thumbnail doesn't exist."""
+    setup_app_db(tmp_path, monkeypatch)
+    thumb_dir = Path(app_module.config.THUMBNAIL_DIR)
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/face_thumbnail/999")
+        assert resp.status_code == 404
+
+
+# --- Tests for list_people route ---
+
+
+def test_list_people_empty(tmp_path, monkeypatch):
+    """Should render page with no people when DB is empty."""
+    setup_app_db(tmp_path, monkeypatch)
+    with app_module.app.test_client() as client:
+        resp = client.get("/people")
+        assert resp.status_code == 200
+
+
+def test_list_people_with_data(tmp_path, monkeypatch):
+    """Should list people with their face counts."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 1, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/people")
+        assert resp.status_code == 200
+        assert b"Alice" in resp.data
+
+
+# --- Tests for person_details route ---
+
+
+def test_person_details_not_found(tmp_path, monkeypatch):
+    """Should redirect when person doesn't exist."""
+    setup_app_db(tmp_path, monkeypatch)
+    with app_module.app.test_client() as client:
+        resp = client.get("/person/NonExistent", follow_redirects=False)
+        assert resp.status_code == 302
+
+
+def test_person_details_with_data(tmp_path, monkeypatch):
+    """Should show person details when they exist."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake")
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video_path)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Bob"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/person/Bob")
+        assert resp.status_code == 200
+        assert b"Bob" in resp.data
+
+
+# --- Tests for metadata_history route ---
+
+
+def test_metadata_history_page(tmp_path, monkeypatch):
+    """Should render metadata history page."""
+    setup_app_db(tmp_path, monkeypatch)
+    with app_module.app.test_client() as client:
+        resp = client.get("/metadata_history")
+        assert resp.status_code == 200
+
+
+# --- Tests for manual_video_next route ---
+
+
+def test_manual_video_next_with_pending(tmp_path, monkeypatch):
+    """Should redirect to next pending video."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        ("hash1", str(tmp_path / "video1.mp4"), "pending", 0),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/videos/manual/next", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "hash1" in resp.headers["Location"]
+
+
+def test_manual_video_next_no_pending(tmp_path, monkeypatch):
+    """Should redirect to dashboard when no pending videos."""
+    setup_app_db(tmp_path, monkeypatch)
+    with app_module.app.test_client() as client:
+        resp = client.get("/videos/manual/next", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/videos/manual" in resp.headers["Location"]
+
+
+# --- Tests for rename_person route ---
+
+
+def test_rename_person_success(tmp_path, monkeypatch):
+    """Should rename person successfully."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "OldName"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/rename_person/OldName",
+            data={"new_name": "NewName"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT person_name FROM faces WHERE cluster_id = 1").fetchone()
+    assert row[0] == "NewName"
+
+
+def test_rename_person_empty_name(tmp_path, monkeypatch):
+    """Should reject empty name."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/rename_person/Alice",
+            data={"new_name": "  "},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT person_name FROM faces").fetchone()
+    assert row[0] == "Alice"  # Unchanged
+
+
+def test_rename_person_to_unknown(tmp_path, monkeypatch):
+    """Should reject renaming to 'Unknown'."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/rename_person/Alice",
+            data={"new_name": "Unknown"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT person_name FROM faces").fetchone()
+    assert row[0] == "Alice"  # Unchanged
+
+
+def test_rename_person_already_exists(tmp_path, monkeypatch):
+    """Should reject renaming to an existing name."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Bob"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/rename_person/Alice",
+            data={"new_name": "Bob"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    alice_row = conn.execute("SELECT person_name FROM faces WHERE cluster_id = 1").fetchone()
+    assert alice_row[0] == "Alice"  # Unchanged
+
+
+# --- Tests for unname_person route ---
+
+
+def test_unname_person(tmp_path, monkeypatch):
+    """Should set person_name to NULL."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/unname_person",
+            data={"person_name": "Alice"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT person_name FROM faces").fetchone()
+    assert row[0] is None
+
+
+# --- Tests for delete_cluster_by_name route ---
+
+
+def test_delete_cluster_by_name(tmp_path, monkeypatch):
+    """Should delete all faces for a person."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 1, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/delete_cluster_by_name",
+            data={"person_name": "Alice"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM faces WHERE person_name = 'Alice'").fetchone()[0]
+    assert count == 0
+
+
+# --- Tests for merge_clusters route ---
+
+
+def test_merge_clusters_success(tmp_path, monkeypatch):
+    """Should merge clusters successfully."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, None),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 2, "Alice"),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/merge_clusters",
+            data={"from_cluster_id": "1", "to_person_name": "Alice"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT cluster_id, person_name FROM faces").fetchall()
+    assert all(row[0] == 2 for row in rows)
+    assert all(row[1] == "Alice" for row in rows)
+
+
+def test_merge_clusters_no_person_selected(tmp_path, monkeypatch):
+    """Should reject merge with no person selected."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/merge_clusters",
+            data={"from_cluster_id": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT cluster_id FROM faces").fetchone()
+    assert row[0] == 1  # Unchanged
+
+
+def test_merge_clusters_into_unknown(tmp_path, monkeypatch):
+    """Should reject merging into Unknown person."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/merge_clusters",
+            data={"from_cluster_id": "1", "to_person_name": "Unknown"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+
+# --- Tests for split_cluster route ---
+
+
+def test_split_cluster_success(tmp_path, monkeypatch):
+    """Should split selected faces into new cluster."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 1, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+    face_ids = [row[0] for row in conn.execute("SELECT id FROM faces").fetchall()]
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/split_cluster",
+            data={"cluster_id": "1", "face_ids": [str(face_ids[0])]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    clusters = [row[0] for row in conn.execute("SELECT cluster_id FROM faces").fetchall()]
+    assert len(set(clusters)) == 2
+
+
+def test_split_cluster_no_selection(tmp_path, monkeypatch):
+    """Should reject split with no faces selected."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/split_cluster",
+            data={"cluster_id": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT cluster_id FROM faces").fetchone()
+    assert row[0] == 1  # Unchanged
+
+
+# --- Tests for index route (next unnamed group logic) ---
+
+
+def test_index_no_unnamed_groups(tmp_path, monkeypatch):
+    """Should show all done when no unnamed groups exist."""
+    setup_app_db(tmp_path, monkeypatch)
+    with app_module.app.test_client() as client:
+        resp = client.get("/", follow_redirects=False)
+        # Shows all_done template when no unnamed groups
+        assert resp.status_code == 200
+
+
+def test_index_with_unnamed_groups(tmp_path, monkeypatch):
+    """Should redirect to next unnamed group."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 5),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/group/5" in resp.headers["Location"]
+
+
+def test_index_skips_clusters_in_session(tmp_path, monkeypatch):
+    """Should skip clusters in session."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 5),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h2", 0, "0,0,0,0", enc, 10),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        # Set skipped clusters in session
+        with client.session_transaction() as sess:
+            sess["skipped_clusters"] = [5]
+
+        resp = client.get("/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/group/10" in resp.headers["Location"]
+
+
+# --- Tests for index route with OCR data ---
+
+
+def test_index_route_with_ocr_data(tmp_path, monkeypatch):
+    """Index route should aggregate OCR data."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+
+    video1 = tmp_path / "video1.mp4"
+    video1.write_bytes(b"v1")
+
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("h1", str(video1)),
+    )
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1, "Alice"),
+    )
+    conn.execute(
+        "INSERT INTO video_text (file_hash, raw_text, normalized_text, occurrence_count) VALUES (?, ?, ?, ?)",
+        ("h1", "Conference Room", "conference room", 5),
+    )
+    conn.execute(
+        "INSERT INTO video_text_fragments (file_hash, rank, fragment_text, fragment_lower, occurrence_count, text_length) VALUES (?, ?, ?, ?, ?, ?)",
+        ("h1", 1, "Conference", "conference", 5, 10),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/person/Alice")
+        assert resp.status_code == 200
+
+
+# --- Tests for tag_group route with pagination ---
+
+
+def test_tag_group_page_out_of_range(tmp_path, monkeypatch):
+    """Should handle page numbers that are too high."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/group/1?page=999")
+        assert resp.status_code == 200
+
+
+# --- Tests for additional routes ---
+
+
+def test_delete_cluster_route(tmp_path, monkeypatch):
+    """Should delete all faces in a cluster."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/delete_cluster",
+            data={"cluster_id": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM faces WHERE cluster_id = 1").fetchone()[0]
+    assert count == 0
+
+
+def test_merge_clusters_target_not_found(tmp_path, monkeypatch):
+    """Should handle non-existent target person."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    enc = pickle.dumps(np.array([0]))
+    conn.execute(
+        "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id) VALUES (?, ?, ?, ?, ?)",
+        ("h1", 0, "0,0,0,0", enc, 1),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.post(
+            "/merge_clusters",
+            data={"from_cluster_id": "1", "to_person_name": "NonExistent"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
