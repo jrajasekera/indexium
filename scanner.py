@@ -1299,12 +1299,12 @@ def process_video_job(job_data):
 
                         try:
                             face_locations = face_recognition.face_locations(
-                                rgb_frame,
-                                model=config.FACE_DETECTION_MODEL,  # type: ignore[arg-type]
+                                rgb_frame,  # type: ignore[arg-type]
+                                model=config.FACE_DETECTION_MODEL,
                             )
                             face_encodings = face_recognition.face_encodings(
-                                rgb_frame,
-                                face_locations,  # type: ignore[arg-type]
+                                rgb_frame,  # type: ignore[arg-type]
+                                face_locations,
                             )
 
                             for location, encoding in zip(
