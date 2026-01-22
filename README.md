@@ -224,31 +224,12 @@ indexium/
    - Reduce `CPU_CORES_TO_USE` if system becomes unresponsive
    - Increase `FRAME_SKIP` for faster but less thorough scanning
 
-### Database Issues
-
-If you encounter database corruption:
-1. Stop all processes
-2. Delete `video_faces.db`
-3. Restart scanning process
-
 ## Safety Features
 
 - **Non-destructive**: Original video files are safely preserved during metadata writing
 - **Graceful shutdown**: Ctrl+C during scanning saves progress before exit
 - **File integrity**: Uses content hashing to avoid reprocessing moved files
 - **Backup-friendly**: All data stored in single SQLite database file
-
-## License
-
-[TODO]
-
-## Contributing
-
-[TODO]
-
-## Support
-
-[TODO]
 
 ## Running Tests
 
