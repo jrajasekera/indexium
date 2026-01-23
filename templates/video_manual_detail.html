@@ -189,7 +189,7 @@
                         <input type="hidden" name="focus_person" value="{{ focus_person }}">
                         {% endif %}
                         <input type="hidden" name="status" value="done" />
-                        <button type="submit" class="btn btn-success btn-block" {% if not tags %}disabled title="Add at least one person tag first"{% endif %}>Mark as Done</button>
+                        <button type="submit" class="btn btn-success btn-block disabled:text-black disabled:opacity-70" {% if not tags %}disabled title="Add at least one person tag first"{% endif %}>Mark as Done</button>
                         {% if not tags %}<p class="text-xs text-base-content/60 text-center">Add at least one person tag to enable this button.</p>{% endif %}
                     </form>
                     <form action="{{ url_for('manual_video_update_status', file_hash=video.file_hash) }}" method="post" class="space-y-3">
