@@ -27,3 +27,5 @@ logs/
 .coverage
 htmlcov/
 coverage.xml
+
+.playwright-mcp/
