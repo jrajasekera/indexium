@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lxml import etree
+
 
 class NfoParseError(Exception):
     """Raised when NFO file cannot be parsed."""
@@ -54,4 +56,65 @@ class NfoService:
         for candidate in candidates:
             if candidate.exists():
                 return str(candidate)
+        return None
+
+    def read_actors(self, nfo_path: str) -> list[NfoActor]:
+        """Parse NFO XML, return all actors with full structure preserved.
+
+        Raises:
+            NfoParseError: If XML is malformed or unreadable
+        """
+        root, _ = self._read_xml(nfo_path)
+        actors = []
+
+        for actor_elem in root.findall("actor"):
+            name_elem = actor_elem.find("name")
+            if name_elem is None or not name_elem.text:
+                continue
+
+            actors.append(
+                NfoActor(
+                    name=name_elem.text.strip(),
+                    source=actor_elem.get("source"),
+                    role=self._get_child_text(actor_elem, "role"),
+                    type=self._get_child_text(actor_elem, "type"),
+                    thumb=self._get_child_text(actor_elem, "thumb"),
+                    raw_element=actor_elem,
+                )
+            )
+
+        return actors
+
+    def _read_xml(self, nfo_path: str) -> tuple[etree._Element, str | None]:
+        """Read NFO file, return (root element, detected encoding)."""
+        try:
+            with open(nfo_path, "rb") as f:
+                raw = f.read()
+        except OSError as e:
+            raise NfoParseError(nfo_path, f"Cannot read file: {e}") from e
+
+        # Detect BOM and encoding
+        encoding = None
+        if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
+            raw = raw[3:]
+            encoding = "utf-8-sig"
+
+        try:
+            parser = etree.XMLParser(remove_blank_text=False, recover=True)
+            root = etree.fromstring(raw, parser)
+
+            if root is None:
+                raise NfoParseError(nfo_path, "XML recovery failed")
+
+            return root, encoding
+
+        except etree.XMLSyntaxError as e:
+            raise NfoParseError(nfo_path, f"XML syntax error: {e}") from e
+
+    @staticmethod
+    def _get_child_text(elem: etree._Element, tag: str) -> str | None:
+        """Get text content of child element, or None."""
+        child = elem.find(tag)
+        if child is not None and child.text:
+            return child.text.strip()
         return None
