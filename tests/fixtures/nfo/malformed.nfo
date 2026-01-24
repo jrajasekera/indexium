@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<movie>
+  <title>Malformed XML</title>
+  <actor>
+    <name>Unclosed Tag
+  </actor>
+</movie>

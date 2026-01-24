@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>Test Video With Actors</title>
+  <actor>
+    <name>Tom Hanks</name>
+    <role>Forrest</role>
+    <type>Actor</type>
+    <thumb>https://image.tmdb.org/t/p/original/abc.jpg</thumb>
+  </actor>
+  <actor>
+    <name>Robin Wright</name>
+    <role>Jenny</role>
+    <type>Actor</type>
+  </actor>
+</movie>
