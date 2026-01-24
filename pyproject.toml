@@ -19,6 +19,7 @@ dependencies = [
     "scikit-learn==1.5.0",
     "setuptools>=80.9.0",
     "playwright>=1.57.0",
+    "lxml>=5.0.0",
 ]
 
 [project.optional-dependencies]
