@@ -313,3 +313,42 @@ def test_backup_manager_find_backup_path():
     manager = NfoBackupManager()
     path = manager.find_backup_path("/path/to/video.nfo", operation_id=123)
     assert path == "/path/to/video.nfo.bak.123"
+
+
+# --- Database schema tests ---
+
+
+def test_nfo_actor_cache_table_exists(tmp_path, monkeypatch):
+    """Verify nfo_actor_cache table is created by setup_database."""
+    import sqlite3
+
+    import scanner as scanner_module
+
+    monkeypatch.setattr(scanner_module.config, "DATABASE_FILE", str(tmp_path / "test.db"))
+    monkeypatch.setattr(scanner_module, "DATABASE_FILE", str(tmp_path / "test.db"))
+
+    scanner_module.setup_database()
+
+    conn = sqlite3.connect(tmp_path / "test.db")
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "nfo_actor_cache" in tables
+
+    # Verify columns
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(nfo_actor_cache)")}
+    assert {"nfo_path", "actors_json", "nfo_mtime", "updated_at"} <= columns
+
+
+def test_metadata_operation_items_has_nfo_path_column(tmp_path, monkeypatch):
+    """Verify metadata_operation_items has nfo_path column."""
+    import sqlite3
+
+    import scanner as scanner_module
+
+    monkeypatch.setattr(scanner_module.config, "DATABASE_FILE", str(tmp_path / "test.db"))
+    monkeypatch.setattr(scanner_module, "DATABASE_FILE", str(tmp_path / "test.db"))
+
+    scanner_module.setup_database()
+
+    conn = sqlite3.connect(tmp_path / "test.db")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(metadata_operation_items)")}
+    assert "nfo_path" in columns
