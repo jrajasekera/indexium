@@ -805,3 +805,118 @@ def test_nfo_writer_skips_items_without_updates(tmp_path, monkeypatch):
 
     # File should not have been modified
     assert nfo.stat().st_mtime == original_mtime
+
+
+# --- NfoHistoryService tests ---
+
+
+def test_history_service_list_operations(tmp_path, monkeypatch):
+    """NfoHistoryService.list_operations returns operation list."""
+    import sqlite3
+
+    from nfo_services import NfoHistoryService
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    # Insert test operation
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO metadata_operations (operation_type, status, file_count) "
+        "VALUES ('nfo_write', 'completed', 5)"
+    )
+    conn.commit()
+    conn.close()
+
+    history = NfoHistoryService(db_path)
+    ops, total = history.list_operations(limit=10)
+
+    assert total >= 1
+    assert len(ops) >= 1
+    assert ops[0]["status"] == "completed"
+
+
+def test_history_service_rollback_operation(tmp_path, monkeypatch):
+    """NfoHistoryService.rollback_operation restores from backup."""
+    import sqlite3
+
+    from nfo_services import NfoBackupManager, NfoHistoryService
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    # Create NFO and backup
+    nfo = tmp_path / "video.nfo"
+    original_content = '<?xml version="1.0"?><movie><title>Original</title></movie>'
+    nfo.write_text(original_content)
+
+    backup_manager = NfoBackupManager()
+    backup_manager.create_backup(str(nfo), operation_id=1)
+
+    # Modify NFO
+    nfo.write_text('<?xml version="1.0"?><movie><title>Modified</title></movie>')
+
+    # Insert operation record
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO metadata_operations (id, operation_type, status, file_count) "
+        "VALUES (1, 'nfo_write', 'completed', 1)"
+    )
+    conn.execute(
+        "INSERT INTO metadata_operation_items (operation_id, file_hash, file_path, status, nfo_path, new_comment) "
+        "VALUES (1, 'hash1', ?, 'success', ?, '')",
+        (str(tmp_path / "video.mp4"), str(nfo)),
+    )
+    conn.commit()
+    conn.close()
+
+    # Rollback
+    history = NfoHistoryService(db_path)
+    result = history.rollback_operation(1)
+
+    assert result["success"] is True
+    assert "Original" in nfo.read_text()
+
+
+def test_history_service_get_operation_detail(tmp_path, monkeypatch):
+    """NfoHistoryService.get_operation_detail returns full details."""
+    import sqlite3
+
+    from nfo_services import NfoHistoryService
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    # Insert operation and items
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO metadata_operations (id, operation_type, status, file_count) "
+        "VALUES (42, 'nfo_write', 'completed', 2)"
+    )
+    conn.execute(
+        "INSERT INTO metadata_operation_items (operation_id, file_hash, file_path, status, new_comment) "
+        "VALUES (42, 'hash1', '/video1.mp4', 'success', '')"
+    )
+    conn.execute(
+        "INSERT INTO metadata_operation_items (operation_id, file_hash, file_path, status, new_comment) "
+        "VALUES (42, 'hash2', '/video2.mp4', 'success', '')"
+    )
+    conn.commit()
+    conn.close()
+
+    history = NfoHistoryService(db_path)
+    detail = history.get_operation_detail(42)
+
+    assert detail is not None
+    assert detail["operation"]["id"] == 42
+    assert len(detail["items"]) == 2
+
+
+def test_history_service_rollback_nonexistent_operation(tmp_path, monkeypatch):
+    """NfoHistoryService.rollback_operation returns error for missing operation."""
+    from nfo_services import NfoHistoryService
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    history = NfoHistoryService(db_path)
+    result = history.rollback_operation(999)
+
+    assert result["success"] is False
+    assert "not found" in result["error"].lower()
