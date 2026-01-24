@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -199,3 +199,68 @@ class NfoBackupManager:
         # This would scan for .bak.* files and check mtime
         # Implementation deferred - needs directory scanning
         return 0
+
+
+@dataclass
+class NfoPlanItem:
+    """Plan item with full UI/API compatibility.
+
+    Maintains all fields expected by metadata_preview.html and app.py serialization.
+    """
+
+    # Core identifiers
+    file_hash: str
+    file_path: str | None
+    file_name: str | None
+    file_extension: str | None
+
+    # NFO-specific (new)
+    nfo_path: str | None  # None = no NFO file, skip
+
+    # People data
+    db_people: list[str]  # People tagged in Indexium DB
+    existing_people: list[str]  # All existing Indexium actors (alias for UI)
+    result_people: list[str]  # Final people list after operation
+    tags_to_add: list[str]  # New people to add
+    tags_to_remove: list[str]  # Indexium actors to remove
+
+    # NFO-specific internal data
+    existing_indexium_actors: list[str]  # Current <actor source="indexium">
+    other_actors: list[NfoActor]  # Actors from Jellyfin/TMDb (preserved)
+
+    # Comment fields (for UI compatibility - serialize actors)
+    existing_comment: str | None  # Serialized existing Indexium actors
+    result_comment: str  # Serialized result actors
+
+    # Status and risk
+    risk_level: str  # "safe", "warning", "danger", "blocked"
+    can_update: bool  # False if no NFO file or parse error
+
+    # Issues tracking
+    issues: list[str] = field(default_factory=list)
+    issue_codes: list[str] = field(default_factory=list)
+    probe_error: str | None = None  # Now used for XML parse errors
+
+    # UI display fields
+    metadata_only_people: list[str] = field(default_factory=list)  # Non-indexium actors in NFO
+    will_overwrite_comment: bool = False  # True if changing existing actors
+    overwrites_custom_comment: bool = False  # True if danger level
+    tag_count: int = 0  # len(result_people)
+    new_tag_count: int = 0  # len(tags_to_add)
+    file_modified_time: float | None = None  # NFO file mtime
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for JSON API response."""
+        data = asdict(self)
+        data["requires_update"] = self.requires_update
+        # Remove internal fields not needed by UI
+        data.pop("other_actors", None)
+        data.pop("existing_indexium_actors", None)
+        return data
+
+    @property
+    def requires_update(self) -> bool:
+        """True if this item needs to be written."""
+        if not self.can_update:
+            return False
+        return bool(self.tags_to_add or self.tags_to_remove)

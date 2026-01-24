@@ -352,3 +352,118 @@ def test_metadata_operation_items_has_nfo_path_column(tmp_path, monkeypatch):
     conn = sqlite3.connect(tmp_path / "test.db")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(metadata_operation_items)")}
     assert "nfo_path" in columns
+
+
+# --- NfoPlanItem tests ---
+
+
+def test_nfo_plan_item_dataclass():
+    """NfoPlanItem creates with all expected fields."""
+    from nfo_services import NfoPlanItem
+
+    item = NfoPlanItem(
+        file_hash="abc123",
+        file_path="/videos/test.mp4",
+        file_name="test.mp4",
+        file_extension=".mp4",
+        nfo_path="/videos/test.nfo",
+        db_people=["Alice", "Bob"],
+        existing_people=["Alice"],
+        result_people=["Alice", "Bob"],
+        tags_to_add=["Bob"],
+        tags_to_remove=[],
+        existing_indexium_actors=["Alice"],
+        other_actors=[],
+        existing_comment="Alice",
+        result_comment="Alice, Bob",
+        risk_level="safe",
+        can_update=True,
+    )
+
+    assert item.file_hash == "abc123"
+    assert item.nfo_path == "/videos/test.nfo"
+    assert item.tags_to_add == ["Bob"]
+    assert item.requires_update is True
+
+
+def test_nfo_plan_item_requires_update_false_when_no_changes():
+    """requires_update is False when no tags to add or remove."""
+    from nfo_services import NfoPlanItem
+
+    item = NfoPlanItem(
+        file_hash="abc123",
+        file_path="/videos/test.mp4",
+        file_name="test.mp4",
+        file_extension=".mp4",
+        nfo_path="/videos/test.nfo",
+        db_people=["Alice"],
+        existing_people=["Alice"],
+        result_people=["Alice"],
+        tags_to_add=[],
+        tags_to_remove=[],
+        existing_indexium_actors=["Alice"],
+        other_actors=[],
+        existing_comment="Alice",
+        result_comment="Alice",
+        risk_level="safe",
+        can_update=True,
+    )
+
+    assert item.requires_update is False
+
+
+def test_nfo_plan_item_requires_update_false_when_blocked():
+    """requires_update is False when can_update is False."""
+    from nfo_services import NfoPlanItem
+
+    item = NfoPlanItem(
+        file_hash="abc123",
+        file_path="/videos/test.mp4",
+        file_name="test.mp4",
+        file_extension=".mp4",
+        nfo_path=None,  # No NFO file
+        db_people=["Alice", "Bob"],
+        existing_people=[],
+        result_people=["Alice", "Bob"],
+        tags_to_add=["Alice", "Bob"],
+        tags_to_remove=[],
+        existing_indexium_actors=[],
+        other_actors=[],
+        existing_comment=None,
+        result_comment="Alice, Bob",
+        risk_level="blocked",
+        can_update=False,
+    )
+
+    assert item.requires_update is False
+
+
+def test_nfo_plan_item_to_dict():
+    """to_dict serializes item for API."""
+    from nfo_services import NfoPlanItem
+
+    item = NfoPlanItem(
+        file_hash="abc123",
+        file_path="/videos/test.mp4",
+        file_name="test.mp4",
+        file_extension=".mp4",
+        nfo_path="/videos/test.nfo",
+        db_people=["Alice"],
+        existing_people=["Alice"],
+        result_people=["Alice"],
+        tags_to_add=[],
+        tags_to_remove=[],
+        existing_indexium_actors=["Alice"],
+        other_actors=[],
+        existing_comment="Alice",
+        result_comment="Alice",
+        risk_level="safe",
+        can_update=True,
+    )
+
+    data = item.to_dict()
+    assert data["file_hash"] == "abc123"
+    assert data["requires_update"] is False
+    # Internal fields removed
+    assert "other_actors" not in data
+    assert "existing_indexium_actors" not in data
