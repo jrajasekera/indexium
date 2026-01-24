@@ -11,7 +11,8 @@ Replace video file comment-based metadata with Jellyfin-compatible NFO files.
 - Clean break from old comment-based system
 - New classes, retire old ones
 - **Full UI/API field compatibility** - `NfoPlanItem` mirrors all fields from `PlanItem`
-- **Shared NFO deduplication** - Multiple videos sharing `movie.nfo` are grouped and merged
+- **One plan item per video** - Preserves UI/API contract; shared NFO writes are coordinated at execution time
+- **Clear path semantics** - `file_path` = video path (display), `nfo_path` = NFO path (operations)
 
 ## What Changes
 
@@ -37,12 +38,18 @@ Replace video file comment-based metadata with Jellyfin-compatible NFO files.
 ```python
 @dataclass
 class NfoActor:
+    """Actor data extracted from NFO file.
+
+    Note: raw_element is NOT cached. When writing, we always read the NFO
+    fresh to get current raw elements, ensuring unknown children are preserved.
+    Cache only stores the extractable fields (name, source, role, type, thumb).
+    """
     name: str
     source: str | None = None      # "indexium" for our actors
     role: str | None = None
     type: str | None = None
     thumb: str | None = None
-    raw_element: Element | None = None  # Preserve unknown children
+    raw_element: Element | None = field(default=None, repr=False)  # NOT cached
 
 @dataclass
 class NfoPlanItem:
@@ -195,7 +202,7 @@ class NfoBackupManager:
 
 ### NfoPlanner
 
-Builds change plans with shared NFO deduplication:
+Builds change plans preserving 1:1 video-to-item mapping:
 
 ```python
 class NfoPlanner:
@@ -207,37 +214,43 @@ class NfoPlanner:
     def build_plan(self, file_hashes: list[str]) -> list[NfoPlanItem]:
         """Build plan for given file hashes.
 
-        Handles shared NFO files (movie.nfo) by:
-        1. Grouping videos by resolved nfo_path
-        2. Merging db_people from all videos sharing an NFO
-        3. Creating one plan item per NFO (not per video)
-        4. Storing the NFO path for rollback reliability
+        Creates ONE plan item PER VIDEO (not per NFO) to preserve UI/API contract.
+        The file_hash → plan_item mapping must be 1:1 for selection/editing to work.
+
+        For shared NFOs (multiple videos → same movie.nfo):
+        - Each video gets its own plan item
+        - Each item's db_people is MERGED from all videos sharing that NFO
+        - Each item shows the same result_people (union of all videos)
+        - Write coordination happens at execution time, not planning time
         """
 
-    def _group_by_nfo(
+    def _collect_shared_nfo_people(
         self,
         file_hashes: list[str],
         conn: sqlite3.Connection
-    ) -> dict[str, list[tuple[str, str, list[str]]]]:
-        """Group videos by their NFO path.
+    ) -> dict[str, list[str]]:
+        """For each nfo_path, collect merged db_people from all videos sharing it.
 
-        Returns: {nfo_path: [(file_hash, video_path, db_people), ...]}
+        Returns: {nfo_path: [merged_people_list]}
 
-        Videos without NFO are grouped under None key.
+        This allows each video's plan item to show the full merged people list
+        while maintaining 1:1 video-to-item mapping.
         """
 
-    def _build_item_for_nfo(
+    def _build_item_for_video(
         self,
+        file_hash: str,
+        video_path: str,
         nfo_path: str | None,
-        videos: list[tuple[str, str, list[str]]],
+        merged_people: list[str],
         conn: sqlite3.Connection
     ) -> NfoPlanItem:
-        """Build a single plan item for an NFO (possibly shared by multiple videos).
+        """Build a plan item for a single video.
 
-        For shared NFOs:
-        - file_hash is the first video's hash (primary)
-        - db_people is merged from all videos
-        - file_path is the first video's path
+        - file_hash: This video's hash (used for UI/API keying)
+        - video_path: This video's path (used for display)
+        - nfo_path: The resolved NFO path (may be shared with other videos)
+        - merged_people: Union of db_people from all videos sharing this NFO
         """
 
     def _ensure_cache_table(self, conn: sqlite3.Connection) -> None:
@@ -250,7 +263,9 @@ class NfoPlanner:
     ) -> tuple[list[NfoActor], float] | None:
         """Return (cached actors, mtime) if NFO hasn't changed, else None.
 
-        Cache is keyed by nfo_path (not file_hash) to handle shared NFOs.
+        Cache is keyed by nfo_path (not file_hash).
+        Cache stores extractable fields only (name, source, role, type, thumb).
+        raw_element is NOT cached - always read fresh when writing.
         """
 
     def _update_cache(
@@ -260,7 +275,10 @@ class NfoPlanner:
         actors: list[NfoActor],
         nfo_mtime: float
     ) -> None:
-        """Update actor cache for NFO path."""
+        """Update actor cache for NFO path.
+
+        Serializes actors WITHOUT raw_element to JSON.
+        """
 ```
 
 ### Risk Level Determination
@@ -288,7 +306,7 @@ def _determine_risk_level(self, item: NfoPlanItem) -> str:
 
 ### NfoWriter
 
-Async writer with pause/resume/cancel:
+Async writer with pause/resume/cancel and shared NFO coordination:
 
 ```python
 @dataclass
@@ -296,6 +314,7 @@ class NfoWriterRuntime:
     operation_id: int
     pause_event: threading.Event
     cancel_event: threading.Event
+    written_nfos: set[str] = field(default_factory=set)  # Track written NFO paths
 
 class NfoWriter:
     def __init__(self, db_path: str):
@@ -328,15 +347,34 @@ class NfoWriter:
         """Get current operation status with item details."""
 
     def _process_loop(self, operation_id: int, backup: bool) -> None:
-        """Background thread: process items with pause/cancel checks."""
+        """Background thread: process items with pause/cancel checks.
 
-    def _write_single_item(self, item: NfoPlanItem, operation_id: int, backup: bool) -> None:
-        """Write a single NFO file.
+        IMPORTANT: Tracks written NFO paths to avoid duplicate writes.
+        Multiple videos may share the same NFO - we only write it once.
+        """
 
-        1. Create backup if enabled
-        2. Read current NFO
+    def _write_single_item(
+        self,
+        item: NfoPlanItem,
+        operation_id: int,
+        backup: bool,
+        runtime: NfoWriterRuntime
+    ) -> str:
+        """Write a single NFO file, coordinating shared NFO writes.
+
+        Returns: "success", "skipped" (already written), or "failed"
+
+        Shared NFO coordination:
+        1. Check if nfo_path already in runtime.written_nfos
+        2. If yes: mark item as "success" (inherits the write) without re-writing
+        3. If no: write NFO, add to written_nfos, mark item as "success"
+
+        Write steps (when not skipped):
+        1. Read current NFO fresh (to get raw_element for unknown children)
+        2. Create backup if enabled
         3. Update actors (remove old indexium, add new)
         4. Write NFO preserving formatting
+        5. Add nfo_path to runtime.written_nfos
         """
 ```
 
@@ -387,13 +425,16 @@ class NfoHistoryService:
 ```sql
 CREATE TABLE IF NOT EXISTS nfo_actor_cache (
     nfo_path TEXT PRIMARY KEY,     -- Keyed by NFO path, not file_hash
-    actors_json TEXT,              -- JSON array of NfoActor objects
+    actors_json TEXT,              -- JSON array of NfoActor objects (without raw_element)
     nfo_mtime REAL,                -- NFO file modification time
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 ```
 
-**Note**: Cache is keyed by `nfo_path` (not `file_hash`) because multiple videos can share a single `movie.nfo` file.
+**Notes**:
+- Cache is keyed by `nfo_path` (not `file_hash`) because multiple videos can share a single `movie.nfo` file
+- `actors_json` stores extractable fields only: `name`, `source`, `role`, `type`, `thumb`
+- `raw_element` is NOT cached - we always read the NFO fresh when writing to preserve unknown children/attributes
 
 ### Schema Migration: Add `nfo_path` Column
 
@@ -446,6 +487,18 @@ The following columns keep their names but change semantics:
 - `metadata_operation_items.new_comment` - Now stores serialized new Indexium actors
 - `metadata_history.original_comment` - Now stores full NFO actor section XML
 - `metadata_history.original_metadata_json` - Now stores full NFO XML (for complete restoration)
+
+**Path semantics clarification**:
+
+| Column | Contains | Used For |
+|--------|----------|----------|
+| `metadata_operation_items.file_path` | Video file path | Display in UI, identifying the video |
+| `metadata_operation_items.nfo_path` | NFO file path | Rollback operations, backup location |
+
+Both paths are stored because:
+1. `file_path` (video) is what users see and search for
+2. `nfo_path` is what we actually modify and need for rollback
+3. They may differ (video.mp4 → movie.nfo) and nfo_path may be shared
 
 ## Configuration
 
@@ -616,39 +669,55 @@ When using Jellyfin's `movie.nfo` convention, multiple videos in the same direct
 ```
 
 This creates issues:
-- Multiple plan items pointing to same NFO
-- Duplicate writes overwriting each other
-- Backup collisions
-- Cache keyed by file_hash is wrong
+- UI/API keys everything by `file_hash` - deduplication breaks selection/editing
+- Search/filter by video path won't find deduplicated items
+- Stats say "N files" but dedup makes them "N unique NFOs"
+- Duplicate writes if not coordinated
 
 ### The Solution
 
-**Deduplicate by NFO path during planning:**
+**Preserve 1:1 video-to-item mapping, coordinate writes at execution:**
 
-1. Group all videos by their resolved `nfo_path`
-2. For shared NFOs, merge `db_people` from all videos
-3. Create ONE plan item per unique NFO path
-4. Use `nfo_path` as the cache key (not `file_hash`)
+1. **Planning**: Each video gets its own plan item (preserves UI/API contract)
+2. **People merging**: Each item shows merged people from ALL videos sharing that NFO
+3. **Write coordination**: Track written NFOs during execution, skip duplicates
 
 ```python
 def build_plan(self, file_hashes: list[str]) -> list[NfoPlanItem]:
-    # Group by NFO path
-    nfo_groups = self._group_by_nfo(file_hashes, conn)
+    # First pass: collect merged people for each NFO path
+    nfo_to_people = self._collect_shared_nfo_people(file_hashes, conn)
 
+    # Second pass: build one item per video, with merged people
     items = []
-    for nfo_path, videos in nfo_groups.items():
-        if nfo_path is None:
-            # Videos without NFO get individual blocked items
-            for file_hash, video_path, db_people in videos:
-                items.append(self._make_blocked_item(file_hash, video_path))
-        else:
-            # One item per NFO, merging people from all videos
-            items.append(self._build_item_for_nfo(nfo_path, videos, conn))
+    for file_hash in file_hashes:
+        video_path = self._get_video_path(file_hash, conn)
+        nfo_path = self.nfo_service.find_nfo_path(video_path)
+        merged_people = nfo_to_people.get(nfo_path, [])
+
+        items.append(self._build_item_for_video(
+            file_hash, video_path, nfo_path, merged_people, conn
+        ))
 
     return items
+
+# During write:
+def _write_single_item(self, item, operation_id, backup, runtime):
+    if item.nfo_path in runtime.written_nfos:
+        # Already written by another video sharing this NFO
+        return "success"  # Inherit the write
+
+    # Actually write the NFO
+    self._do_write(item, operation_id, backup)
+    runtime.written_nfos.add(item.nfo_path)
+    return "success"
 ```
 
-**UI consideration**: The plan will show fewer items than videos when NFOs are shared. The UI already handles this (items are per-operation, not per-video).
+**Benefits**:
+- UI/API selection and editing work correctly (1:1 file_hash mapping)
+- Search/filter finds all videos by their original paths
+- Stats show actual file count (not deduplicated)
+- Duplicate writes are prevented at execution time
+- All videos sharing an NFO show the same merged result_people
 
 ## Assumptions and Risks
 
@@ -714,8 +783,9 @@ def test_plan_risk_level_safe():
 def test_plan_risk_level_warning():
 def test_plan_risk_level_danger():
 def test_plan_risk_level_blocked():
-def test_plan_deduplicates_shared_movie_nfo():
+def test_plan_preserves_one_item_per_video():
 def test_plan_merges_people_for_shared_nfo():
+def test_plan_shared_nfo_all_items_have_same_result():
 def test_plan_item_has_all_ui_fields():
 
 # NfoWriter tests
@@ -725,6 +795,9 @@ def test_pause_resume_operation():
 def test_cancel_operation():
 def test_write_creates_backup():
 def test_write_updates_nfo_actors():
+def test_write_skips_already_written_nfo():
+def test_write_shared_nfo_only_writes_once():
+def test_write_reads_fresh_nfo_for_raw_elements():
 
 # NfoHistoryService tests
 def test_rollback_uses_stored_nfo_path():
@@ -771,5 +844,11 @@ Extend `e2e_test.py`:
 6. Verify non-Indexium actors preserved
 7. Rollback and verify original NFO restored
 8. Verify backup file cleaned up after rollback
-9. Test shared movie.nfo scenario with multiple videos
+9. Test shared movie.nfo scenario:
+   - Multiple videos in same directory share movie.nfo
+   - Plan shows one item per video (not deduplicated)
+   - Each item shows merged people from all videos
+   - Only one NFO write occurs (coordinated)
+   - All items marked success after write
 10. Test malformed NFO handling (blocked, not crashed)
+11. Test cache doesn't store raw_element (verify by checking JSON)
