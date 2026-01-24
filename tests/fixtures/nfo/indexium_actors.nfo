@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>Test Video With Indexium Actors</title>
+  <actor source="indexium">
+    <name>John Smith</name>
+  </actor>
+  <actor source="indexium">
+    <name>Jane Doe</name>
+  </actor>
+</movie>

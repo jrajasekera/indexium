@@ -7,7 +7,7 @@
             <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
                 <div>
                     <h1 class="text-3xl font-bold text-base-content">Smart Metadata Planner</h1>
-                    <p class="text-base-content/70">Preview, filter, and fine-tune metadata updates before writing them to your video files.</p>
+                    <p class="text-base-content/70">Preview, filter, and fine-tune metadata updates before writing them to NFO files.</p>
                 </div>
                 <div class="grid grid-cols-2 gap-4 md:grid-cols-4" aria-live="polite">
                     <div class="stat bg-base-200 rounded-2xl p-4">
@@ -346,7 +346,7 @@
             const selected = state.selected.has(item.file_hash);
             const risk = riskLabels[item.risk_level] || riskLabels.safe;
             const added = item.tags_to_add.length ? item.tags_to_add.map(escapeHtml).join(', ') : 'No new tags';
-            const existing = item.existing_comment ? escapeHtml(item.existing_comment) : '<span class="text-base-content/60">No current comment</span>';
+            const existing = item.existing_comment ? escapeHtml(item.existing_comment) : '<span class="text-base-content/60">No current actors</span>';
             const issues = item.issues.length ? item.issues.map(escapeHtml).join(' • ') : 'Ready to write';
             const metadataOnly = item.metadata_only_people.length ? `Existing metadata also lists: ${item.metadata_only_people.map(escapeHtml).join(', ')}` : '';
             fragments.push(`

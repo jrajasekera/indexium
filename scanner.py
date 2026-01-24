@@ -1208,6 +1208,22 @@ def setup_database():
             "CREATE INDEX IF NOT EXISTS idx_metadata_history_operation ON metadata_history (operation_item_id)"
         )
 
+        # NFO metadata cache table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS nfo_actor_cache (
+                nfo_path TEXT PRIMARY KEY,
+                actors_json TEXT,
+                nfo_mtime REAL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Schema migration: add nfo_path column to metadata_operation_items
+        cursor.execute("PRAGMA table_info(metadata_operation_items)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if "nfo_path" not in existing_columns:
+            cursor.execute("ALTER TABLE metadata_operation_items ADD COLUMN nfo_path TEXT")
+
         # Backfill counts and manual review status for legacy records
         cursor.execute(
             """

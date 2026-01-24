@@ -71,7 +71,7 @@ def run_pipeline(video_dir: str, work_dir: str) -> None:
                     operation_id = int(operation_ids[0])
                     timeout = time.monotonic() + 60
                     while time.monotonic() < timeout:
-                        status = app_module.metadata_writer.get_operation_status(operation_id)
+                        status = app_module.nfo_writer.get_operation_status(operation_id)
                         if not status:
                             break
                         if status["status"] in {"completed", "cancelled"}:

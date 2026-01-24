@@ -108,3 +108,7 @@ class Config:
     OCR_MAX_TEXT_LENGTH: int = int(os.environ.get("INDEXIUM_OCR_MAX_TEXT_LENGTH", "80"))
     OCR_MAX_RESULTS_PER_VIDEO: int = int(os.environ.get("INDEXIUM_OCR_MAX_RESULTS", "200"))
     OCR_TOP_FRAGMENT_COUNT: int = int(os.environ.get("INDEXIUM_OCR_TOP_FRAGMENTS", "10"))
+
+    # NFO Metadata Settings
+    NFO_REMOVE_STALE_ACTORS: bool = _str_to_bool(os.environ.get("NFO_REMOVE_STALE_ACTORS", "true"))
+    NFO_BACKUP_MAX_AGE_DAYS: int = int(os.environ.get("NFO_BACKUP_MAX_AGE_DAYS", "30"))
