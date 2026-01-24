@@ -239,3 +239,77 @@ def test_write_actors_preserves_mixed_actors(tmp_path):
     # John Smith (old indexium) removed, Alice (new indexium) added
     assert any(a.name == "Alice" and a.source == "indexium" for a in actors)
     assert not any(a.name == "John Smith" for a in actors)
+
+
+# --- NfoBackupManager tests ---
+
+
+def test_backup_manager_create_backup(tmp_path):
+    """create_backup copies NFO to operation-scoped backup."""
+    from nfo_services import NfoBackupManager
+
+    nfo = tmp_path / "video.nfo"
+    nfo.write_text("<movie><title>Test</title></movie>")
+
+    manager = NfoBackupManager()
+    backup_path = manager.create_backup(str(nfo), operation_id=42)
+
+    assert backup_path == str(nfo) + ".bak.42"
+    assert Path(backup_path).exists()
+    assert Path(backup_path).read_text() == nfo.read_text()
+
+
+def test_backup_manager_restore_backup(tmp_path):
+    """restore_backup restores from operation-scoped backup."""
+    from nfo_services import NfoBackupManager
+
+    nfo = tmp_path / "video.nfo"
+    original_content = "<movie><title>Original</title></movie>"
+    nfo.write_text(original_content)
+
+    manager = NfoBackupManager()
+    manager.create_backup(str(nfo), operation_id=42)
+
+    # Modify the NFO
+    nfo.write_text("<movie><title>Modified</title></movie>")
+
+    # Restore
+    result = manager.restore_backup(str(nfo), operation_id=42)
+    assert result is True
+    assert nfo.read_text() == original_content
+
+
+def test_backup_manager_restore_missing_returns_false(tmp_path):
+    """restore_backup returns False when backup doesn't exist."""
+    from nfo_services import NfoBackupManager
+
+    nfo = tmp_path / "video.nfo"
+    nfo.write_text("<movie></movie>")
+
+    manager = NfoBackupManager()
+    result = manager.restore_backup(str(nfo), operation_id=999)
+    assert result is False
+
+
+def test_backup_manager_cleanup_backup(tmp_path):
+    """cleanup_backup removes the backup file."""
+    from nfo_services import NfoBackupManager
+
+    nfo = tmp_path / "video.nfo"
+    nfo.write_text("<movie></movie>")
+
+    manager = NfoBackupManager()
+    backup_path = manager.create_backup(str(nfo), operation_id=42)
+    assert Path(backup_path).exists()
+
+    manager.cleanup_backup(str(nfo), operation_id=42)
+    assert not Path(backup_path).exists()
+
+
+def test_backup_manager_find_backup_path():
+    """find_backup_path returns expected path format."""
+    from nfo_services import NfoBackupManager
+
+    manager = NfoBackupManager()
+    path = manager.find_backup_path("/path/to/video.nfo", operation_id=123)
+    assert path == "/path/to/video.nfo.bak.123"

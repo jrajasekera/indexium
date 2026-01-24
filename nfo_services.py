@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -162,3 +163,39 @@ class NfoService:
         if child is not None and child.text:
             return child.text.strip()
         return None
+
+
+class NfoBackupManager:
+    """Operation-scoped backup/restore for NFO files."""
+
+    def find_backup_path(self, nfo_path: str, operation_id: int) -> str:
+        """Return expected backup path for given NFO and operation."""
+        return f"{nfo_path}.bak.{operation_id}"
+
+    def create_backup(self, nfo_path: str, operation_id: int) -> str:
+        """Copy NFO to operation-scoped backup, return backup path."""
+        backup_path = self.find_backup_path(nfo_path, operation_id)
+        shutil.copy2(nfo_path, backup_path)
+        return backup_path
+
+    def restore_backup(self, nfo_path: str, operation_id: int) -> bool:
+        """Restore from operation-specific backup if exists. Returns success."""
+        backup_path = self.find_backup_path(nfo_path, operation_id)
+        if not Path(backup_path).exists():
+            return False
+        shutil.copy2(backup_path, nfo_path)
+        return True
+
+    def cleanup_backup(self, nfo_path: str, operation_id: int) -> None:
+        """Remove operation-specific backup file."""
+        backup_path = self.find_backup_path(nfo_path, operation_id)
+        try:
+            Path(backup_path).unlink()
+        except FileNotFoundError:
+            pass
+
+    def cleanup_old_backups(self, max_age_days: int = 30) -> int:
+        """Remove backup files older than max_age_days. Returns count removed."""
+        # This would scan for .bak.* files and check mtime
+        # Implementation deferred - needs directory scanning
+        return 0
