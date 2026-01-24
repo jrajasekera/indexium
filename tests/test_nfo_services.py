@@ -526,7 +526,7 @@ def test_nfo_planner_build_plan_with_nfo(tmp_path, monkeypatch):
 
 
 def test_nfo_planner_build_plan_without_nfo(tmp_path, monkeypatch):
-    """NfoPlanner marks video without NFO as blocked."""
+    """NfoPlanner creates default NFO path when video exists but NFO doesn't."""
     import sqlite3
 
     from nfo_services import NfoPlanner
@@ -557,9 +557,10 @@ def test_nfo_planner_build_plan_without_nfo(tmp_path, monkeypatch):
 
     assert len(items) == 1
     item = items[0]
-    assert item.nfo_path is None
-    assert item.can_update is False
-    assert item.risk_level == "blocked"
+    # nfo_path is set to default location when video exists
+    assert item.nfo_path == str(video_dir / "test.nfo")
+    assert item.can_update is True
+    assert item.risk_level == "safe"
 
 
 def test_nfo_planner_detects_tags_to_add(tmp_path, monkeypatch):
