@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <plot />
+  <lockdata>false</lockdata>
+  <dateadded>2026-01-10 14:57:28</dateadded>
+  <title>mixkit-pov-flipping-through-a-newspaper-41192-hd-ready</title>
+  <year>2021</year>
+  <premiered>2021-07-02</premiered>
+  <releasedate>2021-07-02</releasedate>
+  <runtime>0</runtime>
+  <art>
+    <poster>/Users/jrajasekera/source/indexium/test_vids/mixkit-pov-flipping-through-a-newspaper-41192-hd-ready-poster.jpg</poster>
+  </art>
+  <isuserfavorite>false</isuserfavorite>
+  <playcount>0</playcount>
+  <watched>false</watched>
+  <resume>
+    <position>0</position>
+    <total>9.041667</total>
+  </resume>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <codec>h264</codec>
+        <micodec>h264</micodec>
+        <bitrate>2755557</bitrate>
+        <width>1280</width>
+        <height>720</height>
+        <aspect>16:9</aspect>
+        <aspectratio>16:9</aspectratio>
+        <framerate>24</framerate>
+        <language>und</language>
+        <scantype>progressive</scantype>
+        <default>True</default>
+        <forced>False</forced>
+        <duration>0</duration>
+        <durationinseconds>9</durationinseconds>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>

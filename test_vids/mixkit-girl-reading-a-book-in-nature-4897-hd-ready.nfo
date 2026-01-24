@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <plot />
+  <lockdata>false</lockdata>
+  <dateadded>2026-01-10 00:08:28</dateadded>
+  <title>mixkit-girl-reading-a-book-in-nature-4897-hd-ready</title>
+  <year>2020</year>
+  <premiered>2020-05-06</premiered>
+  <releasedate>2020-05-06</releasedate>
+  <runtime>0</runtime>
+  <art>
+    <poster>/Users/jrajasekera/source/indexium/test_vids/mixkit-girl-reading-a-book-in-nature-4897-hd-ready-poster.jpg</poster>
+  </art>
+  <isuserfavorite>false</isuserfavorite>
+  <playcount>0</playcount>
+  <watched>false</watched>
+  <resume>
+    <position>0</position>
+    <total>15.890875</total>
+  </resume>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <codec>h264</codec>
+        <micodec>h264</micodec>
+        <bitrate>2518156</bitrate>
+        <width>1280</width>
+        <height>720</height>
+        <aspect>16:9</aspect>
+        <aspectratio>16:9</aspectratio>
+        <framerate>23.976025</framerate>
+        <language>und</language>
+        <scantype>progressive</scantype>
+        <default>True</default>
+        <forced>False</forced>
+        <duration>0</duration>
+        <durationinseconds>15</durationinseconds>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>

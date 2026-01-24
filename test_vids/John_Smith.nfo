@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <plot />
+  <lockdata>false</lockdata>
+  <dateadded>2026-01-10 15:24:07</dateadded>
+  <title>John_Smith</title>
+  <runtime>0</runtime>
+  <art>
+    <poster>/Users/jrajasekera/source/indexium/test_vids/John_Smith-poster.jpg</poster>
+  </art>
+  <isuserfavorite>false</isuserfavorite>
+  <playcount>0</playcount>
+  <watched>false</watched>
+  <resume>
+    <position>0</position>
+    <total>12.1</total>
+  </resume>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <codec>h264</codec>
+        <micodec>h264</micodec>
+        <bitrate>2291432</bitrate>
+        <width>1280</width>
+        <height>720</height>
+        <aspect>16:9</aspect>
+        <aspectratio>16:9</aspectratio>
+        <framerate>30</framerate>
+        <language>und</language>
+        <scantype>progressive</scantype>
+        <default>True</default>
+        <forced>False</forced>
+        <duration>0</duration>
+        <durationinseconds>12</durationinseconds>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>

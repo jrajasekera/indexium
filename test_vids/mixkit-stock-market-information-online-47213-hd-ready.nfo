@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <plot />
+  <lockdata>false</lockdata>
+  <dateadded>2026-01-10 01:01:12</dateadded>
+  <title>mixkit-stock-market-information-online-47213-hd-ready</title>
+  <year>2023</year>
+  <premiered>2023-02-16</premiered>
+  <releasedate>2023-02-16</releasedate>
+  <runtime>1</runtime>
+  <art>
+    <poster>/Users/jrajasekera/source/indexium/test_vids/mixkit-stock-market-information-online-47213-hd-ready-poster.jpg</poster>
+  </art>
+  <isuserfavorite>false</isuserfavorite>
+  <playcount>0</playcount>
+  <watched>false</watched>
+  <resume>
+    <position>0</position>
+    <total>30.3</total>
+  </resume>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <codec>h264</codec>
+        <micodec>h264</micodec>
+        <bitrate>3011092</bitrate>
+        <width>1280</width>
+        <height>720</height>
+        <aspect>16:9</aspect>
+        <aspectratio>16:9</aspectratio>
+        <framerate>50</framerate>
+        <language>und</language>
+        <scantype>progressive</scantype>
+        <default>True</default>
+        <forced>False</forced>
+        <duration>0</duration>
+        <durationinseconds>30</durationinseconds>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>
