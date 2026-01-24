@@ -163,3 +163,79 @@ def test_read_actors_empty_returns_empty_list(tmp_path):
     actors = service.read_actors(str(nfo))
 
     assert actors == []
+
+
+# --- write_actors tests ---
+
+
+def test_write_actors_adds_indexium_actors(tmp_path):
+    """write_actors adds new actors with source='indexium'."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "empty_actors.nfo", nfo)
+
+    service = NfoService()
+    service.write_actors(str(nfo), ["Alice", "Bob"])
+
+    # Re-read and verify
+    actors = service.read_actors(str(nfo))
+    assert len(actors) == 2
+    assert {a.name for a in actors} == {"Alice", "Bob"}
+    assert all(a.source == "indexium" for a in actors)
+
+
+def test_write_actors_preserves_non_indexium_actors(tmp_path):
+    """write_actors preserves existing non-indexium actors."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "existing_actors.nfo", nfo)
+
+    service = NfoService()
+    service.write_actors(str(nfo), ["Alice"])
+
+    actors = service.read_actors(str(nfo))
+    names = {a.name for a in actors}
+    # Original actors preserved
+    assert "Tom Hanks" in names
+    assert "Robin Wright" in names
+    # New actor added
+    assert "Alice" in names
+    assert len(actors) == 3
+
+
+def test_write_actors_replaces_indexium_actors(tmp_path):
+    """write_actors replaces existing indexium actors."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "indexium_actors.nfo", nfo)
+
+    service = NfoService()
+    service.write_actors(str(nfo), ["Alice", "Bob"])
+
+    actors = service.read_actors(str(nfo))
+    indexium_actors = [a for a in actors if a.source == "indexium"]
+    assert len(indexium_actors) == 2
+    assert {a.name for a in indexium_actors} == {"Alice", "Bob"}
+    # Old indexium actors removed
+    assert "John Smith" not in {a.name for a in actors}
+
+
+def test_write_actors_preserves_mixed_actors(tmp_path):
+    """write_actors in mixed scenario: replaces indexium, preserves others."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "mixed_actors.nfo", nfo)
+
+    service = NfoService()
+    service.write_actors(str(nfo), ["Alice"])
+
+    actors = service.read_actors(str(nfo))
+    # Tom Hanks (non-indexium) preserved
+    assert any(a.name == "Tom Hanks" and a.source is None for a in actors)
+    # John Smith (old indexium) removed, Alice (new indexium) added
+    assert any(a.name == "Alice" and a.source == "indexium" for a in actors)
+    assert not any(a.name == "John Smith" for a in actors)

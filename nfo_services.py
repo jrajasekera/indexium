@@ -111,6 +111,50 @@ class NfoService:
         except etree.XMLSyntaxError as e:
             raise NfoParseError(nfo_path, f"XML syntax error: {e}") from e
 
+    def write_actors(
+        self,
+        nfo_path: str,
+        indexium_actors: list[str],
+    ) -> None:
+        """Update NFO: keep non-indexium actors, replace indexium actors.
+
+        Raises:
+            NfoParseError: If XML is malformed
+        """
+        root, encoding = self._read_xml(nfo_path)
+
+        # Remove existing indexium actors
+        for actor_elem in root.findall("actor"):
+            if actor_elem.get("source") == "indexium":
+                root.remove(actor_elem)
+
+        # Add new indexium actors
+        for name in sorted(set(indexium_actors), key=str.lower):
+            actor_elem = etree.SubElement(root, "actor", source="indexium")
+            name_elem = etree.SubElement(actor_elem, "name")
+            name_elem.text = name
+
+        self._write_xml(nfo_path, root, encoding)
+
+    def _write_xml(self, nfo_path: str, root: etree._Element, encoding: str | None) -> None:
+        """Write NFO file, preserving original encoding."""
+        xml_bytes = etree.tostring(
+            root,
+            encoding=encoding or "utf-8",
+            xml_declaration=True,
+            pretty_print=False,
+        )
+
+        with open(nfo_path, "wb") as f:
+            if encoding == "utf-8-sig":
+                f.write(b"\xef\xbb\xbf")  # Write BOM
+            f.write(xml_bytes)
+
+    def get_indexium_actors(self, nfo_path: str) -> list[str]:
+        """Convenience: return only names where source='indexium'."""
+        actors = self.read_actors(nfo_path)
+        return [a.name for a in actors if a.source == "indexium"]
+
     @staticmethod
     def _get_child_text(elem: etree._Element, tag: str) -> str | None:
         """Get text content of child element, or None."""
