@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <plot />
+  <lockdata>false</lockdata>
+  <dateadded>2026-01-10 00:07:19</dateadded>
+  <title>100546-video-720</title>
+  <runtime>0</runtime>
+  <art>
+    <poster>/Users/jrajasekera/source/indexium/test_vids/100546-video-720-poster.jpg</poster>
+  </art>
+  <isuserfavorite>false</isuserfavorite>
+  <playcount>0</playcount>
+  <watched>false</watched>
+  <resume>
+    <position>0</position>
+    <total>14.556208</total>
+  </resume>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <codec>h264</codec>
+        <micodec>h264</micodec>
+        <bitrate>2954129</bitrate>
+        <width>1280</width>
+        <height>720</height>
+        <aspect>16:9</aspect>
+        <aspectratio>16:9</aspectratio>
+        <framerate>23.976025</framerate>
+        <language>und</language>
+        <scantype>progressive</scantype>
+        <default>True</default>
+        <forced>False</forced>
+        <duration>0</duration>
+        <durationinseconds>14</durationinseconds>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>

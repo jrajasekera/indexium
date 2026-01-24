@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <plot />
+  <lockdata>false</lockdata>
+  <dateadded>2026-01-10 00:14:35</dateadded>
+  <title>mixkit-men-coming-to-play-soccer-football-4567-hd-ready</title>
+  <year>2020</year>
+  <premiered>2020-05-06</premiered>
+  <releasedate>2020-05-06</releasedate>
+  <runtime>0</runtime>
+  <art>
+    <poster>/Users/jrajasekera/source/indexium/test_vids/mixkit-men-coming-to-play-soccer-football-4567-hd-ready-poster.jpg</poster>
+  </art>
+  <isuserfavorite>false</isuserfavorite>
+  <playcount>0</playcount>
+  <watched>false</watched>
+  <resume>
+    <position>0</position>
+    <total>30</total>
+  </resume>
+  <fileinfo>
+    <streamdetails>
+      <video>
+        <codec>h264</codec>
+        <micodec>h264</micodec>
+        <bitrate>2494843</bitrate>
+        <width>1280</width>
+        <height>720</height>
+        <aspect>16:9</aspect>
+        <aspectratio>16:9</aspectratio>
+        <framerate>30</framerate>
+        <language>und</language>
+        <scantype>progressive</scantype>
+        <default>True</default>
+        <forced>False</forced>
+        <duration>0</duration>
+        <durationinseconds>30</durationinseconds>
+      </video>
+    </streamdetails>
+  </fileinfo>
+</movie>
