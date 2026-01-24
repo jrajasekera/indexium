@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "nfo"
+
 
 def test_nfo_parse_error_has_path_and_reason():
     """NfoParseError stores path and reason."""
@@ -81,3 +86,80 @@ def test_find_nfo_path_missing_returns_none(tmp_path):
     service = NfoService()
     result = service.find_nfo_path(str(video))
     assert result is None
+
+
+# --- read_actors tests ---
+
+
+def test_read_actors_parses_all_actors(tmp_path):
+    """read_actors returns all actors from NFO."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "existing_actors.nfo", nfo)
+
+    service = NfoService()
+    actors = service.read_actors(str(nfo))
+
+    assert len(actors) == 2
+    names = {a.name for a in actors}
+    assert names == {"Tom Hanks", "Robin Wright"}
+
+
+def test_read_actors_captures_source_attribute(tmp_path):
+    """read_actors captures source='indexium' attribute."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "indexium_actors.nfo", nfo)
+
+    service = NfoService()
+    actors = service.read_actors(str(nfo))
+
+    assert len(actors) == 2
+    assert all(a.source == "indexium" for a in actors)
+
+
+def test_read_actors_preserves_full_structure(tmp_path):
+    """read_actors preserves role, type, thumb fields."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "existing_actors.nfo", nfo)
+
+    service = NfoService()
+    actors = service.read_actors(str(nfo))
+
+    tom = next(a for a in actors if a.name == "Tom Hanks")
+    assert tom.role == "Forrest"
+    assert tom.type == "Actor"
+    assert tom.thumb is not None
+    assert tom.raw_element is not None
+
+
+def test_read_actors_missing_file_raises(tmp_path):
+    """read_actors raises NfoParseError for missing file."""
+    import pytest
+
+    from nfo_services import NfoParseError, NfoService
+
+    nfo = tmp_path / "nonexistent.nfo"
+
+    service = NfoService()
+    with pytest.raises(NfoParseError) as exc_info:
+        service.read_actors(str(nfo))
+
+    assert "nonexistent.nfo" in str(exc_info.value)
+
+
+def test_read_actors_empty_returns_empty_list(tmp_path):
+    """read_actors returns empty list when no actors."""
+    from nfo_services import NfoService
+
+    nfo = tmp_path / "test.nfo"
+    shutil.copy(FIXTURES_DIR / "empty_actors.nfo", nfo)
+
+    service = NfoService()
+    actors = service.read_actors(str(nfo))
+
+    assert actors == []
