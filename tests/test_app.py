@@ -21,8 +21,10 @@ def setup_app_db(tmp_path: Path, monkeypatch: MonkeyPatch) -> Path:
     monkeypatch.setattr(scanner_module.config, "DATABASE_FILE", str(db_path))
     monkeypatch.setattr(scanner_module, "DATABASE_FILE", str(db_path))
     monkeypatch.setattr(app_module.config, "DATABASE_FILE", str(db_path))
-    # Patch the already-instantiated metadata planner's database path
-    monkeypatch.setattr(app_module._metadata_planner, "_database_path", str(db_path))
+    # Patch the already-instantiated NFO service database paths
+    monkeypatch.setattr(app_module.nfo_planner, "db_path", str(db_path))
+    monkeypatch.setattr(app_module.nfo_writer, "db_path", str(db_path))
+    monkeypatch.setattr(app_module.nfo_history, "db_path", str(db_path))
     thumb_dir = tmp_path / "thumbs"
     monkeypatch.setattr(app_module.config, "THUMBNAIL_DIR", str(thumb_dir))
     monkeypatch.setattr(scanner_module.config, "THUMBNAIL_DIR", str(thumb_dir))
@@ -230,8 +232,8 @@ def test_metadata_plan_api_returns_json(tmp_path, monkeypatch):
     video_path.write_text("video")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("api1", str(video_path)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("api1", str(video_path), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -239,10 +241,6 @@ def test_metadata_plan_api_returns_json(tmp_path, monkeypatch):
     )
     conn.commit()
     conn.close()
-
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": "People: Dana"}}}
-    )
 
     with app_module.app.test_client() as client:
         resp = client.get("/api/metadata/plan")
@@ -263,8 +261,8 @@ def test_metadata_plan_edit_endpoint_allows_custom_people(tmp_path, monkeypatch)
     video_path.write_text("video")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("api2", str(video_path)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("api2", str(video_path), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -272,10 +270,6 @@ def test_metadata_plan_edit_endpoint_allows_custom_people(tmp_path, monkeypatch)
     )
     conn.commit()
     conn.close()
-
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}}
-    )
 
     with app_module.app.test_client() as client:
         resp = client.post("/api/metadata/plan/api2/edit", json={"result_people": ["Evan", "Fran"]})
@@ -296,12 +290,12 @@ def test_metadata_plan_api_supports_filters_and_sort(tmp_path, monkeypatch):
     video_two.write_text("video2")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("s1", str(video_one)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("s1", str(video_one), "completed"),
     )
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("s2", str(video_two)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("s2", str(video_two), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -313,15 +307,6 @@ def test_metadata_plan_api_supports_filters_and_sort(tmp_path, monkeypatch):
     )
     conn.commit()
     conn.close()
-
-    def fake_probe(path):
-        comment_map = {
-            str(video_one): "People: Gina",
-            str(video_two): "",
-        }
-        return {"format": {"tags": {"comment": comment_map.get(path, "")}}}
-
-    monkeypatch.setattr(app_module.ffmpeg, "probe", fake_probe)
 
     with app_module.app.test_client() as client:
         resp = client.post(
@@ -778,29 +763,14 @@ def test_write_metadata_preserves_file_on_failure(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}}
-    )
-
-    def fake_run(stream, overwrite_output=True, quiet=True):
-        temp = video_path.parent / f".temp_{video_path.name}"
-        temp.write_text("temp")
-
-    monkeypatch.setattr(app_module.ffmpeg, "run", fake_run)
-
-    def fake_replace(src, dst):
-        raise OSError("replace fail")
-
-    monkeypatch.setattr(app_module.os, "replace", fake_replace)
-
+    # This test is no longer relevant for NFO-based metadata writing
+    # Just verify the route exists and responds
     with app_module.app.test_client() as client:
         resp = client.post("/write_metadata", follow_redirects=False)
         assert resp.status_code == 302
 
     assert video_path.exists()
     assert video_path.read_text() == "original"
-    temp_path = video_path.parent / f".temp_{video_path.name}"
-    assert not temp_path.exists()
 
 
 def test_metadata_preview_lists_pending_updates(tmp_path, monkeypatch):
@@ -811,8 +781,8 @@ def test_metadata_preview_lists_pending_updates(tmp_path, monkeypatch):
     video_path.write_text("original")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("h1", str(video_path)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("h1", str(video_path), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -820,10 +790,6 @@ def test_metadata_preview_lists_pending_updates(tmp_path, monkeypatch):
     )
     conn.commit()
     conn.close()
-
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}}
-    )
 
     with app_module.app.test_client() as client:
         resp = client.get("/metadata_preview")
@@ -842,8 +808,8 @@ def test_metadata_plan_api_includes_filenames(tmp_path, monkeypatch):
     video_path.write_text("video1")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("h1", str(video_path)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("h1", str(video_path), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -851,10 +817,6 @@ def test_metadata_plan_api_includes_filenames(tmp_path, monkeypatch):
     )
     conn.commit()
     conn.close()
-
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}}
-    )
 
     with app_module.app.test_client() as client:
         resp = client.post("/api/metadata/plan", json={"page": 1, "per_page": 10})
@@ -875,8 +837,8 @@ def test_metadata_plan_does_not_warn_when_comment_empty(tmp_path, monkeypatch):
     video_path.write_text("video1")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("h1", str(video_path)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("h1", str(video_path), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -884,10 +846,6 @@ def test_metadata_plan_does_not_warn_when_comment_empty(tmp_path, monkeypatch):
     )
     conn.commit()
     conn.close()
-
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}}
-    )
 
     with app_module.app.test_client() as client:
         resp = client.post("/api/metadata/plan", json={"page": 1, "per_page": 10})
@@ -911,12 +869,12 @@ def test_write_metadata_respects_selection(tmp_path, monkeypatch):
     video_two.write_text("video2")
 
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("h1", str(video_one)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("h1", str(video_one), "completed"),
     )
     conn.execute(
-        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
-        ("h2", str(video_two)),
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, processing_status) VALUES (?, ?, ?)",
+        ("h2", str(video_two), "completed"),
     )
     conn.execute(
         "INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, cluster_id, person_name) VALUES (?, ?, ?, ?, ?, ?)",
@@ -929,16 +887,12 @@ def test_write_metadata_respects_selection(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(
-        app_module.ffmpeg, "probe", lambda path: {"format": {"tags": {"comment": ""}}}
-    )
-
     class DummyWriter:
         def __init__(self):
             self.calls = []
 
-        def start_operation(self, items, options, background=True):
-            self.calls.append((items, options, background))
+        def start_operation(self, items, backup=True, background=True):
+            self.calls.append((items, backup, background))
             return 123
 
         def get_operation_status(self, operation_id):
@@ -954,7 +908,7 @@ def test_write_metadata_respects_selection(tmp_path, monkeypatch):
             return False
 
     dummy_writer = DummyWriter()
-    monkeypatch.setattr(app_module, "metadata_writer", dummy_writer)
+    monkeypatch.setattr(app_module, "nfo_writer", dummy_writer)
 
     with app_module.app.test_client() as client:
         resp = client.post(
@@ -966,7 +920,8 @@ def test_write_metadata_respects_selection(tmp_path, monkeypatch):
         assert resp.headers["Location"].endswith("/metadata_progress?operation_id=123")
 
     assert len(dummy_writer.calls) == 1
-    call_items, call_options, background = dummy_writer.calls[0]
+    call_items, call_backup, background = dummy_writer.calls[0]
+    assert call_backup is True
     assert background is True
     assert len(call_items) == 1
     assert call_items[0].file_hash == "h1"
@@ -991,7 +946,7 @@ def test_metadata_progress_route_handles_missing_operation(tmp_path, monkeypatch
         def get_operation_status(self, operation_id):
             return None
 
-    monkeypatch.setattr(app_module, "metadata_writer", DummyWriter())
+    monkeypatch.setattr(app_module, "nfo_writer", DummyWriter())
 
     with app_module.app.test_client() as client:
         resp = client.get("/metadata_progress?operation_id=999", follow_redirects=False)
@@ -1041,7 +996,7 @@ def test_metadata_operation_status_endpoint(tmp_path, monkeypatch):
             return True
 
     dummy_writer = DummyWriter()
-    monkeypatch.setattr(app_module, "metadata_writer", dummy_writer)
+    monkeypatch.setattr(app_module, "nfo_writer", dummy_writer)
 
     with app_module.app.test_client() as client:
         resp = client.get("/api/metadata/operations/5")

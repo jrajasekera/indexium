@@ -65,6 +65,12 @@ class NfoService:
                 return str(candidate)
         return None
 
+    def get_default_nfo_path(self, video_path: str) -> str:
+        """Get the default NFO path for a video file (creates <video_name>.nfo)."""
+        base = Path(video_path).stem
+        parent = Path(video_path).parent
+        return str(parent / f"{base}.nfo")
+
     def read_actors(self, nfo_path: str) -> list[NfoActor]:
         """Parse NFO XML, return all actors with full structure preserved.
 
@@ -145,9 +151,12 @@ class NfoService:
 
     def _write_xml(self, nfo_path: str, root: etree._Element, encoding: str | None) -> None:
         """Write NFO file, preserving original encoding."""
+        # Handle utf-8-sig specially (lxml doesn't understand this encoding name)
+        lxml_encoding = "utf-8" if encoding == "utf-8-sig" else (encoding or "utf-8")
+
         xml_bytes = etree.tostring(
             root,
-            encoding=encoding or "utf-8",
+            encoding=lxml_encoding,
             xml_declaration=True,
             pretty_print=False,
         )
@@ -316,8 +325,12 @@ class NfoPlanner:
         # Get people from DB (faces + video_people)
         db_people = self._get_db_people(file_hash, conn)
 
-        # Find NFO file
-        nfo_path = self.nfo_service.find_nfo_path(video_path) if video_path else None
+        # Find or determine NFO file path
+        existing_nfo_path = self.nfo_service.find_nfo_path(video_path) if video_path else None
+        # Use existing NFO or create new one at default location
+        nfo_path = existing_nfo_path
+        if video_path and not nfo_path and os.path.isfile(video_path):
+            nfo_path = self.nfo_service.get_default_nfo_path(video_path)
 
         # Read existing actors from NFO
         existing_indexium_actors: list[str] = []
@@ -325,10 +338,10 @@ class NfoPlanner:
         probe_error: str | None = None
         nfo_mtime: float | None = None
 
-        if nfo_path:
+        if existing_nfo_path:
             try:
-                nfo_mtime = os.path.getmtime(nfo_path)
-                all_actors = self.nfo_service.read_actors(nfo_path)
+                nfo_mtime = os.path.getmtime(existing_nfo_path)
+                all_actors = self.nfo_service.read_actors(existing_nfo_path)
                 for actor in all_actors:
                     if actor.source == "indexium":
                         existing_indexium_actors.append(actor.name)
@@ -345,10 +358,15 @@ class NfoPlanner:
         tags_to_remove = sorted(existing_set - db_set, key=str.lower)
         result_people = sorted(db_set, key=str.lower)
 
-        # Determine risk level and can_update
+        # Determine can_update: need a target nfo_path and no parse errors
+        # (nfo_path will be set if video exists, even if NFO file doesn't yet exist)
         can_update = nfo_path is not None and probe_error is None
         risk_level = self._determine_risk_level(
-            nfo_path, probe_error, other_actors, db_people, tags_to_remove
+            can_write=nfo_path is not None,
+            probe_error=probe_error,
+            other_actors=other_actors,
+            db_people=db_people,
+            tags_to_remove=tags_to_remove,
         )
 
         # Build comment strings for UI compatibility
@@ -406,17 +424,163 @@ class NfoPlanner:
 
         return sorted(people, key=str.lower)
 
+    def filter_items(
+        self,
+        items: list[NfoPlanItem],
+        filters: dict[str, Any] | None = None,
+    ) -> list[NfoPlanItem]:
+        """Filter plan items based on criteria."""
+        if not filters:
+            return list(items)
+
+        filtered = list(items)
+
+        risk_levels = filters.get("risk_levels")
+        if risk_levels:
+            normalized = {level.lower() for level in risk_levels}
+
+            def risk_match(plan_item: NfoPlanItem) -> bool:
+                if "blocked" in normalized and not plan_item.can_update:
+                    return True
+                return plan_item.risk_level in normalized
+
+            filtered = [item for item in filtered if risk_match(item)]
+
+        requires_update = filters.get("requires_update")
+        if requires_update is not None:
+            filtered = [item for item in filtered if item.requires_update == bool(requires_update)]
+
+        can_update = filters.get("can_update")
+        if can_update is not None:
+            filtered = [item for item in filtered if item.can_update == bool(can_update)]
+
+        tag_range = filters.get("tag_count") or {}
+        min_tags = tag_range.get("min")
+        max_tags = tag_range.get("max")
+        if min_tags is not None:
+            filtered = [item for item in filtered if item.tag_count >= min_tags]
+        if max_tags is not None:
+            filtered = [item for item in filtered if item.tag_count <= max_tags]
+
+        file_types = filters.get("file_types")
+        if file_types:
+            # Normalize extensions (handle both "mp4" and ".mp4")
+            normalized_types = {
+                ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in file_types
+            }
+            filtered = [
+                item
+                for item in filtered
+                if item.file_extension and item.file_extension.lower() in normalized_types
+            ]
+
+        return filtered
+
+    def sort_items(
+        self,
+        items: list[NfoPlanItem],
+        sort_by: str | None = None,
+        direction: str = "asc",
+    ) -> list[NfoPlanItem]:
+        """Sort plan items by specified field."""
+        if not sort_by:
+            return list(items)
+
+        reverse = direction.lower() == "desc"
+
+        def risk_priority(level: str) -> int:
+            return {"danger": 3, "warning": 2, "safe": 1, "blocked": 0}.get(level, 0)
+
+        if sort_by == "risk":
+            return sorted(
+                items,
+                key=lambda item: (risk_priority(item.risk_level), item.file_name or item.file_hash),
+                reverse=reverse,
+            )
+        if sort_by == "tag_count":
+            return sorted(
+                items,
+                key=lambda item: (item.tag_count, item.file_name or item.file_hash),
+                reverse=reverse,
+            )
+        if sort_by == "file_name":
+            return sorted(
+                items,
+                key=lambda item: (item.file_name or item.file_hash).lower(),
+                reverse=reverse,
+            )
+        return list(items)
+
+    def update_item_with_custom_people(
+        self,
+        item: NfoPlanItem,
+        custom_people: list[str],
+    ) -> NfoPlanItem:
+        """Create updated item with custom people list."""
+        result_people = sorted(set(p.strip() for p in custom_people if p.strip()), key=str.lower)
+        if not result_people:
+            result_people = list(item.result_people)
+
+        existing_set = set(item.existing_indexium_actors)
+        result_set = set(result_people)
+
+        tags_to_add = sorted(result_set - existing_set, key=str.lower)
+        tags_to_remove = sorted(existing_set - result_set, key=str.lower)
+
+        issues = list(item.issues)
+        issue_codes = list(item.issue_codes)
+        risk_level = item.risk_level
+
+        if tags_to_remove and risk_level == "safe":
+            risk_level = "warning"
+            if "tag_removal" not in issue_codes:
+                issue_codes.append("tag_removal")
+            removal_issue = "Removing actors from NFO"
+            if removal_issue not in issues:
+                issues.append(removal_issue)
+
+        result_comment = ", ".join(result_people) if result_people else ""
+        will_overwrite = bool(item.existing_indexium_actors and tags_to_remove)
+
+        return NfoPlanItem(
+            file_hash=item.file_hash,
+            file_path=item.file_path,
+            file_name=item.file_name,
+            file_extension=item.file_extension,
+            nfo_path=item.nfo_path,
+            db_people=item.db_people,
+            existing_people=item.existing_people,
+            result_people=result_people,
+            tags_to_add=tags_to_add,
+            tags_to_remove=tags_to_remove,
+            existing_indexium_actors=item.existing_indexium_actors,
+            other_actors=item.other_actors,
+            existing_comment=item.existing_comment,
+            result_comment=result_comment,
+            risk_level=risk_level,
+            can_update=item.can_update,
+            issues=issues,
+            issue_codes=issue_codes,
+            probe_error=item.probe_error,
+            metadata_only_people=item.metadata_only_people,
+            will_overwrite_comment=will_overwrite,
+            overwrites_custom_comment=item.overwrites_custom_comment,
+            tag_count=len(result_people),
+            new_tag_count=len(tags_to_add),
+            file_modified_time=item.file_modified_time,
+        )
+
     def _determine_risk_level(
         self,
-        nfo_path: str | None,
+        can_write: bool,
         probe_error: str | None,
         other_actors: list[NfoActor],
         db_people: list[str],
         tags_to_remove: list[str],
     ) -> str:
         """Determine risk level for this item."""
-        if nfo_path is None:
-            return "blocked"  # No NFO file
+        if not can_write:
+            return "blocked"  # Can't write (no video file or no target path)
 
         if probe_error:
             return "blocked"  # XML parse error

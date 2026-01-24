@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import ffmpeg
 from flask import (
     Flask,
     abort,
@@ -31,14 +30,7 @@ from flask import (
 )
 
 from config import Config
-from metadata_services import (
-    BackupManager,
-    HistoryService,
-    MetadataPlanner,
-    MetadataWriter,
-    PlanItem,
-    WriteOptions,
-)
+from nfo_services import NfoHistoryService, NfoPlanItem, NfoPlanner, NfoWriter
 from text_utils import MIN_FRAGMENT_LENGTH, calculate_top_text_fragments
 
 config = Config()
@@ -47,21 +39,10 @@ app = Flask(__name__)
 # Flask needs a secret key to use flash messages
 app.secret_key = config.SECRET_KEY
 
-_metadata_planner = MetadataPlanner(
-    ffmpeg_module=ffmpeg,
-    database_path=config.DATABASE_FILE,
-    max_workers=config.METADATA_PLAN_WORKERS,
-)
-_backup_manager = BackupManager(ffmpeg_module=ffmpeg)
-metadata_writer = MetadataWriter(
-    database_path=config.DATABASE_FILE,
-    ffmpeg_module=ffmpeg,
-    backup_manager=_backup_manager,
-)
-history_service = HistoryService(
-    database_path=config.DATABASE_FILE,
-    backup_manager=_backup_manager,
-)
+# NFO metadata services
+nfo_planner = NfoPlanner(db_path=config.DATABASE_FILE)
+nfo_writer = NfoWriter(db_path=config.DATABASE_FILE)
+nfo_history = NfoHistoryService(db_path=config.DATABASE_FILE)
 
 # --- DATABASE & HELPERS ---
 
@@ -470,7 +451,7 @@ def _get_next_manual_video(conn: sqlite3.Connection, exclude_hash: str | None = 
     return row["file_hash"] if row else None
 
 
-def _serialize_plan_item(item: PlanItem) -> dict[str, Any]:
+def _serialize_plan_item(item: NfoPlanItem) -> dict[str, Any]:
     """Convert a plan item to the dict shape expected by the planner UI."""
     data = item.to_dict()
     data["name"] = item.file_name
@@ -482,14 +463,15 @@ def build_metadata_plan(
     conn: sqlite3.Connection, target_hashes: list[str] | None = None
 ) -> list[dict[str, Any]]:
     """Builds a per-file plan summarizing pending metadata writes."""
-    plan = _metadata_planner.generate_plan(
-        conn,
-        file_hashes=target_hashes,
-        include_blocked=True,
-    )
+    # Get all file hashes if not specified
+    if target_hashes is None:
+        rows = conn.execute(
+            "SELECT file_hash FROM scanned_files WHERE processing_status = 'completed'"
+        ).fetchall()
+        target_hashes = [row["file_hash"] for row in rows]
 
-    plan_dicts = [_serialize_plan_item(item) for item in plan.items]
-
+    items = nfo_planner.build_plan(target_hashes)
+    plan_dicts = [_serialize_plan_item(item) for item in items]
     plan_dicts.sort(key=lambda entry: ((entry["name"] or "").lower(), entry["file_hash"]))
     return plan_dicts
 
@@ -506,7 +488,15 @@ def api_get_metadata_plan():
         body_hashes = [body_hashes]
     if body_hashes:
         query_hashes.extend(body_hashes)
-    file_hashes = query_hashes or None
+
+    # Get all file hashes if not specified
+    if query_hashes:
+        file_hashes = query_hashes
+    else:
+        rows = conn.execute(
+            "SELECT file_hash FROM scanned_files WHERE processing_status = 'completed'"
+        ).fetchall()
+        file_hashes = [row["file_hash"] for row in rows]
 
     filters = payload.get("filter") or {}
 
@@ -525,21 +515,47 @@ def api_get_metadata_plan():
     sort_by = sort_payload.get("by") or request.args.get("sort")
     sort_dir = sort_payload.get("direction") or request.args.get("direction", "asc")
 
-    plan = _metadata_planner.generate_plan(conn, file_hashes=file_hashes, include_blocked=True)
-    filtered_items = _metadata_planner.filter_items(plan.items, filters)
-    sorted_items = _metadata_planner.sort_items(filtered_items, sort_by=sort_by, direction=sort_dir)
+    items = nfo_planner.build_plan(file_hashes)
+    filtered_items = nfo_planner.filter_items(items, filters)
+    sorted_items = nfo_planner.sort_items(filtered_items, sort_by=sort_by, direction=sort_dir)
     total_items = len(filtered_items)
     start = (page - 1) * per_page
     end = start + per_page
     paginated_items = sorted_items[start:end]
 
+    # Compute statistics inline
+    total_files = len(items)
+    safe_count = sum(1 for item in items if item.risk_level == "safe" and item.can_update)
+    warning_count = sum(1 for item in items if item.risk_level == "warning" and item.can_update)
+    danger_count = sum(1 for item in items if item.risk_level == "danger" and item.can_update)
+    blocked_count = sum(1 for item in items if not item.can_update)
+    requires_update_count = sum(1 for item in items if item.requires_update)
+    no_changes_count = sum(1 for item in items if item.can_update and not item.requires_update)
+
+    # Compute categories inline
+    categories = {
+        "safe": [item.file_hash for item in items if item.risk_level == "safe" and item.can_update],
+        "warning": [
+            item.file_hash for item in items if item.risk_level == "warning" and item.can_update
+        ],
+        "danger": [
+            item.file_hash for item in items if item.risk_level == "danger" and item.can_update
+        ],
+        "blocked": [item.file_hash for item in items if not item.can_update],
+    }
+
     response = {
         "items": [_serialize_plan_item(item) for item in paginated_items],
-        "statistics": plan.statistics.to_dict(),
-        "categories": {
-            category: [plan_item.file_hash for plan_item in items]
-            for category, items in plan.categories.items()
+        "statistics": {
+            "total_files": total_files,
+            "safe": safe_count,
+            "warning": warning_count,
+            "danger": danger_count,
+            "blocked": blocked_count,
+            "requires_update": requires_update_count,
+            "no_changes": no_changes_count,
         },
+        "categories": categories,
         "pagination": {
             "page": page,
             "per_page": per_page,
@@ -547,15 +563,13 @@ def api_get_metadata_plan():
             "total_pages": max(1, math.ceil(total_items / per_page)) if per_page else 1,
         },
         "insights": {
-            "total_people": sum(len(item.result_people) for item in plan.items),
-            "total_new_tags": sum(len(item.tags_to_add) for item in plan.items),
-            "blocked_files": sum(1 for item in plan.items if not item.can_update),
+            "total_people": sum(len(item.result_people) for item in items),
+            "total_new_tags": sum(len(item.tags_to_add) for item in items),
+            "blocked_files": blocked_count,
         },
         "filters": {
-            "file_types": sorted(
-                {item.file_extension for item in plan.items if item.file_extension}
-            ),
-            "issue_codes": sorted({code for item in plan.items for code in item.issue_codes}),
+            "file_types": sorted({item.file_extension for item in items if item.file_extension}),
+            "issue_codes": sorted({code for item in items for code in item.issue_codes}),
         },
         "sort": {
             "applied": {
@@ -577,12 +591,11 @@ def api_edit_metadata_plan_item(file_hash):
     if not isinstance(result_people, list | tuple):
         abort(400, description="result_people must be a list of names")
 
-    conn = get_db_connection()
-    plan = _metadata_planner.generate_plan(conn, file_hashes=[file_hash], include_blocked=True)
-    if not plan.items:
+    items = nfo_planner.build_plan([file_hash])
+    if not items:
         abort(404, description="Plan item not found")
 
-    updated_item = _metadata_planner.update_item_with_custom_people(plan.items[0], result_people)
+    updated_item = nfo_planner.update_item_with_custom_people(items[0], result_people)
     return jsonify({"item": updated_item.to_dict()})
 
 
@@ -598,7 +611,7 @@ def metadata_progress():
         flash("Metadata operation not found. Start a new write from the planner.", "warning")
         return redirect(url_for("metadata_preview"))
 
-    status = metadata_writer.get_operation_status(operation_id)
+    status = nfo_writer.get_operation_status(operation_id)
     if status is None:
         flash("Metadata operation not found or has already been cleaned up.", "warning")
         return redirect(url_for("metadata_preview"))
@@ -608,7 +621,7 @@ def metadata_progress():
 
 @app.route("/api/metadata/operations/<int:operation_id>", methods=["GET"])
 def api_get_operation_status(operation_id: int):
-    status = metadata_writer.get_operation_status(operation_id)
+    status = nfo_writer.get_operation_status(operation_id)
     if status is None:
         abort(404, description="Operation not found")
     return jsonify(status)
@@ -616,21 +629,21 @@ def api_get_operation_status(operation_id: int):
 
 @app.route("/api/metadata/operations/<int:operation_id>/pause", methods=["POST"])
 def api_pause_operation(operation_id: int):
-    if metadata_writer.pause_operation(operation_id):
+    if nfo_writer.pause_operation(operation_id):
         return jsonify({"status": "paused"})
     abort(404, description="Operation not found or already finished")
 
 
 @app.route("/api/metadata/operations/<int:operation_id>/resume", methods=["POST"])
 def api_resume_operation(operation_id: int):
-    if metadata_writer.resume_operation(operation_id):
+    if nfo_writer.resume_operation(operation_id):
         return jsonify({"status": "in_progress"})
     abort(404, description="Operation not found or already finished")
 
 
 @app.route("/api/metadata/operations/<int:operation_id>/cancel", methods=["POST"])
 def api_cancel_operation(operation_id: int):
-    if metadata_writer.cancel_operation(operation_id):
+    if nfo_writer.cancel_operation(operation_id):
         return jsonify({"status": "cancelling"})
     abort(404, description="Operation not found or already finished")
 
@@ -643,14 +656,6 @@ def metadata_history():
 
 @app.route("/api/metadata/history", methods=["GET"])
 def api_get_metadata_history():
-    filters = {
-        "status": request.args.getlist("status") or None,
-        "start_date": request.args.get("start_date"),
-        "end_date": request.args.get("end_date"),
-        "search": request.args.get("search"),
-    }
-    filters = {key: value for key, value in filters.items() if value}
-
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (TypeError, ValueError):
@@ -660,13 +665,28 @@ def api_get_metadata_history():
     except (TypeError, ValueError):
         per_page = 20
 
-    data = history_service.get_operations(filters, page=page, per_page=per_page)
-    return jsonify(data)
+    status_filter = request.args.get("status")
+    offset = (page - 1) * per_page
+    operations, total = nfo_history.list_operations(
+        limit=per_page, offset=offset, status_filter=status_filter
+    )
+
+    return jsonify(
+        {
+            "operations": operations,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": max(1, math.ceil(total / per_page)) if per_page else 1,
+            },
+        }
+    )
 
 
 @app.route("/api/metadata/history/<int:operation_id>", methods=["GET"])
 def api_get_metadata_history_details(operation_id: int):
-    details = history_service.get_operation_details(operation_id)
+    details = nfo_history.get_operation_detail(operation_id)
     if details is None:
         abort(404, description="Operation not found")
     return jsonify(details)
@@ -674,10 +694,9 @@ def api_get_metadata_history_details(operation_id: int):
 
 @app.route("/api/metadata/history/<int:operation_id>/rollback", methods=["POST"])
 def api_rollback_metadata_operation(operation_id: int):
-    try:
-        result = history_service.rollback_operation(operation_id)
-    except ValueError as exc:
-        abort(400, description=str(exc))
+    result = nfo_history.rollback_operation(operation_id)
+    if not result.get("success"):
+        abort(400, description=result.get("error", "Rollback failed"))
     return jsonify(result)
 
 
@@ -1673,19 +1692,18 @@ def metadata_preview():
 
 @app.route("/write_metadata", methods=["POST"])
 def write_metadata():
-    """Starts an asynchronous metadata write operation and redirects to progress view."""
+    """Starts an asynchronous NFO metadata write operation and redirects to progress view."""
     selected_hashes = request.form.getlist("file_hashes")
     if not selected_hashes:
         flash("Select at least one video before starting the write operation.", "warning")
         return redirect(url_for("metadata_preview"))
 
-    conn = get_db_connection()
-    plan = _metadata_planner.generate_plan(conn, file_hashes=selected_hashes, include_blocked=True)
+    items = nfo_planner.build_plan(selected_hashes)
 
     selected_set = set(selected_hashes)
-    ready_items: list[PlanItem] = []
-    blocked_items: list[PlanItem] = []
-    for item in plan.items:
+    ready_items: list[NfoPlanItem] = []
+    blocked_items: list[NfoPlanItem] = []
+    for item in items:
         if item.file_hash not in selected_set:
             continue
         if not item.requires_update:
@@ -1698,7 +1716,7 @@ def write_metadata():
     if not ready_items:
         if blocked_items:
             flash(
-                f"No metadata updates were started. {len(blocked_items)} file(s) are unavailable.",
+                f"No metadata updates were started. {len(blocked_items)} file(s) have no NFO file.",
                 "warning",
             )
         else:
@@ -1707,12 +1725,12 @@ def write_metadata():
 
     if blocked_items:
         flash(
-            f"Skipping {len(blocked_items)} file(s) that are unavailable. They will remain in the planner.",
+            f"Skipping {len(blocked_items)} file(s) that have no NFO file. They will remain in the planner.",
             "warning",
         )
 
     try:
-        operation_id = metadata_writer.start_operation(ready_items, WriteOptions())
+        operation_id = nfo_writer.start_operation(ready_items, backup=True)
     except Exception as exc:  # noqa: BLE001
         flash(f"Unable to start metadata write operation: {exc}", "error")
         return redirect(url_for("metadata_preview"))
