@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import sqlite3
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from lxml import etree
+
+logger = logging.getLogger(__name__)
 
 
 class NfoParseError(Exception):
@@ -427,3 +431,344 @@ class NfoPlanner:
             return "warning"  # Removing previously tagged actors
 
         return "safe"  # Only adding new actors
+
+
+@dataclass
+class _NfoWriterRuntime:
+    """In-memory control block for an active NFO write operation."""
+
+    operation_id: int
+    items: list[NfoPlanItem]
+    item_ids: list[int]
+    pause_event: threading.Event
+    cancel_event: threading.Event
+    written_nfos: set[str] = field(default_factory=set)
+    thread: threading.Thread | None = None
+
+
+class NfoWriter:
+    """Service responsible for executing NFO writes asynchronously."""
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+        self.nfo_service = NfoService()
+        self.backup_manager = NfoBackupManager()
+        self._lock = threading.Lock()
+        self._operations: dict[int, _NfoWriterRuntime] = {}
+
+    def start_operation(
+        self,
+        items: list[NfoPlanItem],
+        backup: bool = True,
+        background: bool = True,
+    ) -> int:
+        """Create an NFO write operation and dispatch background processing."""
+        # Filter to only items that need updates
+        runnable_items = [item for item in items if item.requires_update]
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO metadata_operations (operation_type, status, file_count)
+                VALUES (?, ?, ?)
+                """,
+                ("nfo_write", "pending", len(items)),
+            )
+            operation_id = cursor.lastrowid
+            assert operation_id is not None, "INSERT must return a lastrowid"
+
+            item_ids: list[int] = []
+            for plan_item in items:
+                cursor.execute(
+                    """
+                    INSERT INTO metadata_operation_items (
+                        operation_id,
+                        file_hash,
+                        file_path,
+                        nfo_path,
+                        status,
+                        previous_comment,
+                        new_comment,
+                        tags_added,
+                        tags_removed
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        operation_id,
+                        plan_item.file_hash,
+                        plan_item.file_path or "",
+                        plan_item.nfo_path,
+                        "pending" if plan_item.requires_update else "skipped",
+                        plan_item.existing_comment,
+                        plan_item.result_comment,
+                        ",".join(plan_item.tags_to_add),
+                        ",".join(plan_item.tags_to_remove),
+                    ),
+                )
+                item_id = cursor.lastrowid
+                assert item_id is not None, "INSERT must return a lastrowid"
+                item_ids.append(item_id)
+
+            conn.commit()
+
+        runnable_ids = [
+            item_id for item, item_id in zip(items, item_ids, strict=False) if item.requires_update
+        ]
+        runtime = _NfoWriterRuntime(
+            operation_id=operation_id,
+            items=list(runnable_items),
+            item_ids=runnable_ids,
+            pause_event=threading.Event(),
+            cancel_event=threading.Event(),
+        )
+        runtime.pause_event.set()  # Start unpaused
+
+        with self._lock:
+            self._operations[operation_id] = runtime
+
+        if background:
+            thread = threading.Thread(
+                target=self._run_operation,
+                args=(runtime, backup),
+                daemon=True,
+                name=f"nfo-writer-{operation_id}",
+            )
+            runtime.thread = thread
+            thread.start()
+        else:
+            self._run_operation(runtime, backup)
+
+        return operation_id
+
+    def get_operation_status(self, operation_id: int) -> dict[str, Any] | None:
+        """Get current status of an NFO write operation."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            op_row = conn.execute(
+                "SELECT * FROM metadata_operations WHERE id = ?",
+                (operation_id,),
+            ).fetchone()
+            if not op_row:
+                return None
+
+            item_rows = conn.execute(
+                """
+                SELECT id, file_hash, file_path, nfo_path, status,
+                       previous_comment, new_comment, tags_added, tags_removed,
+                       error_message, processed_at
+                FROM metadata_operation_items
+                WHERE operation_id = ?
+                ORDER BY id
+                """,
+                (operation_id,),
+            ).fetchall()
+
+        totals = {"success": 0, "failed": 0, "pending": 0, "skipped": 0}
+        items: list[dict[str, Any]] = []
+        for row in item_rows:
+            status = row["status"]
+            if status == "success":
+                totals["success"] += 1
+            elif status == "failed":
+                totals["failed"] += 1
+            elif status == "skipped":
+                totals["skipped"] += 1
+            else:
+                totals["pending"] += 1
+
+            items.append(
+                {
+                    "id": row["id"],
+                    "file_hash": row["file_hash"],
+                    "file_path": row["file_path"],
+                    "nfo_path": row["nfo_path"],
+                    "status": status,
+                    "error_message": row["error_message"],
+                    "processed_at": row["processed_at"],
+                }
+            )
+
+        file_count = op_row["file_count"] or max(1, len(items))
+        completed = totals["success"] + totals["failed"] + totals["skipped"]
+        progress = completed / file_count if file_count else 1.0
+
+        return {
+            "operation_id": operation_id,
+            "status": op_row["status"],
+            "file_count": file_count,
+            "success_count": op_row["success_count"],
+            "failure_count": op_row["failure_count"],
+            "pending_count": totals["pending"],
+            "skipped_count": totals["skipped"],
+            "error_message": op_row["error_message"],
+            "started_at": op_row["started_at"],
+            "completed_at": op_row["completed_at"],
+            "progress": progress,
+            "items": items,
+        }
+
+    def pause_operation(self, operation_id: int) -> bool:
+        """Pause an in-progress operation."""
+        with self._lock:
+            runtime = self._operations.get(operation_id)
+        if not runtime:
+            return False
+        runtime.pause_event.clear()
+        self._update_operation_status(operation_id, "paused")
+        return True
+
+    def resume_operation(self, operation_id: int) -> bool:
+        """Resume a paused operation."""
+        with self._lock:
+            runtime = self._operations.get(operation_id)
+        if not runtime:
+            return False
+        runtime.pause_event.set()
+        self._update_operation_status(operation_id, "in_progress")
+        return True
+
+    def cancel_operation(self, operation_id: int) -> bool:
+        """Cancel an operation."""
+        with self._lock:
+            runtime = self._operations.get(operation_id)
+        if not runtime:
+            return False
+        runtime.cancel_event.set()
+        runtime.pause_event.set()  # Unblock if paused
+        self._update_operation_status(operation_id, "cancelling")
+        return True
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _run_operation(self, runtime: _NfoWriterRuntime, backup: bool) -> None:
+        """Background worker for NFO write operation."""
+        operation_id = runtime.operation_id
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE metadata_operations
+                   SET status = 'in_progress', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+                   WHERE id = ?""",
+                (operation_id,),
+            )
+            conn.commit()
+
+        try:
+            processed_ids: set[int] = set()
+            for plan_item, item_id in zip(runtime.items, runtime.item_ids, strict=False):
+                runtime.pause_event.wait()
+                if runtime.cancel_event.is_set():
+                    break
+
+                try:
+                    self._mark_item_status(item_id, "in_progress")
+                    self._write_single_item(plan_item, operation_id, backup, runtime)
+                    self._record_success(operation_id, item_id)
+                    processed_ids.add(item_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Failed to write NFO for %s", plan_item.file_hash)
+                    self._record_failure(operation_id, item_id, str(exc))
+                    processed_ids.add(item_id)
+
+                if runtime.cancel_event.is_set():
+                    break
+
+            if runtime.cancel_event.is_set():
+                # Mark remaining items as skipped
+                for pending_id in runtime.item_ids:
+                    if pending_id not in processed_ids:
+                        with sqlite3.connect(self.db_path) as conn:
+                            conn.execute(
+                                """UPDATE metadata_operation_items
+                                   SET status = 'skipped', processed_at = CURRENT_TIMESTAMP
+                                   WHERE id = ?""",
+                                (pending_id,),
+                            )
+                            conn.commit()
+                self._update_operation_status(operation_id, "cancelled")
+            else:
+                self._update_operation_status(operation_id, "completed")
+        finally:
+            with self._lock:
+                self._operations.pop(operation_id, None)
+
+    def _write_single_item(
+        self,
+        item: NfoPlanItem,
+        operation_id: int,
+        backup: bool,
+        runtime: _NfoWriterRuntime,
+    ) -> None:
+        """Write NFO for a single plan item."""
+        if not item.nfo_path:
+            raise ValueError(f"No NFO path for {item.file_hash}")
+
+        # Coordinate writes to shared NFO files
+        # Only create backup and write if we haven't already written this NFO
+        if item.nfo_path in runtime.written_nfos:
+            logger.debug("Skipping already-written NFO: %s", item.nfo_path)
+            return
+
+        if backup:
+            self.backup_manager.create_backup(item.nfo_path, operation_id)
+
+        self.nfo_service.write_actors(item.nfo_path, item.result_people)
+        runtime.written_nfos.add(item.nfo_path)
+
+    def _update_operation_status(self, operation_id: int, status: str) -> None:
+        """Update operation status in database."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE metadata_operations
+                   SET status = ?,
+                       completed_at = CASE WHEN ? IN ('completed', 'cancelled') THEN CURRENT_TIMESTAMP ELSE completed_at END
+                   WHERE id = ?""",
+                (status, status, operation_id),
+            )
+            conn.commit()
+
+    def _mark_item_status(self, item_id: int, status: str) -> None:
+        """Mark individual item status."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE metadata_operation_items SET status = ? WHERE id = ?",
+                (status, item_id),
+            )
+            conn.commit()
+
+    def _record_success(self, operation_id: int, item_id: int) -> None:
+        """Record successful item write."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE metadata_operation_items
+                   SET status = 'success', processed_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (item_id,),
+            )
+            conn.execute(
+                """UPDATE metadata_operations
+                   SET success_count = COALESCE(success_count, 0) + 1
+                   WHERE id = ?""",
+                (operation_id,),
+            )
+            conn.commit()
+
+    def _record_failure(self, operation_id: int, item_id: int, error: str) -> None:
+        """Record failed item write."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE metadata_operation_items
+                   SET status = 'failed', error_message = ?, processed_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (error, item_id),
+            )
+            conn.execute(
+                """UPDATE metadata_operations
+                   SET failure_count = COALESCE(failure_count, 0) + 1
+                   WHERE id = ?""",
+                (operation_id,),
+            )
+            conn.commit()
