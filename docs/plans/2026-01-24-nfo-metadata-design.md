@@ -10,7 +10,8 @@ Replace video file comment-based metadata with Jellyfin-compatible NFO files.
 - Operation-scoped backups (`video.nfo.bak.{operation_id}`) with rollback support
 - Clean break from old comment-based system
 - New classes, retire old ones
-- Maintain API field names for UI compatibility
+- **Full UI/API field compatibility** - `NfoPlanItem` mirrors all fields from `PlanItem`
+- **Shared NFO deduplication** - Multiple videos sharing `movie.nfo` are grouped and merged
 
 ## What Changes
 
@@ -19,12 +20,12 @@ Replace video file comment-based metadata with Jellyfin-compatible NFO files.
 - Writing phase modifies NFO XML instead of re-encoding video files
 - Faster operations (text file edits vs video file copies)
 - New `nfo_actor_cache` table for performance
+- **Schema addition**: `nfo_path` column added to `metadata_operation_items` for reliable rollback
 
 ## What Stays the Same
 
 - Scanner is unaffected (already ignores non-video files)
-- Database schema field names unchanged (semantics change: "comment" fields store serialized actor data)
-- Web UI largely unchanged (minor label updates)
+- Web UI unchanged (all existing fields preserved)
 - Operation history tracking pattern preserved
 - Async writer with pause/resume/cancel
 - All four risk levels (safe/warning/danger/blocked)
@@ -45,34 +46,66 @@ class NfoActor:
 
 @dataclass
 class NfoPlanItem:
+    """Plan item with full UI/API compatibility.
+
+    Maintains all fields expected by metadata_preview.html and app.py serialization.
+    """
+    # Core identifiers
     file_hash: str
-    video_path: str
+    file_path: str | None
+    file_name: str | None
+    file_extension: str | None
+
+    # NFO-specific (new)
     nfo_path: str | None              # None = no NFO file, skip
+
+    # People data
     db_people: list[str]              # People tagged in Indexium DB
+    existing_people: list[str]        # All existing Indexium actors (alias for UI)
+    result_people: list[str]          # Final people list after operation
+    tags_to_add: list[str]            # New people to add
+    tags_to_remove: list[str]         # Indexium actors to remove
+
+    # NFO-specific internal data
     existing_indexium_actors: list[str]  # Current <actor source="indexium">
     other_actors: list[NfoActor]      # Actors from Jellyfin/TMDb (preserved)
-    actors_to_add: list[str]          # New people to add
-    actors_to_remove: list[str]       # Indexium actors no longer in DB
-    can_update: bool                  # False if no NFO file
+
+    # Comment fields (for UI compatibility - serialize actors)
+    existing_comment: str | None      # Serialized existing Indexium actors
+    result_comment: str               # Serialized result actors
+
+    # Status and risk
     risk_level: str                   # "safe", "warning", "danger", "blocked"
+    can_update: bool                  # False if no NFO file or parse error
+
+    # Issues tracking
     issues: list[str] = field(default_factory=list)
     issue_codes: list[str] = field(default_factory=list)
+    probe_error: str | None = None    # Now used for XML parse errors
 
-    # API compatibility fields (map to UI expectations)
-    @property
-    def existing_comment(self) -> str:
-        """Serialized existing Indexium actors for UI display."""
-        if not self.existing_indexium_actors:
-            return ""
-        return f"People: {', '.join(self.existing_indexium_actors)}"
+    # UI display fields
+    metadata_only_people: list[str] = field(default_factory=list)  # Non-indexium actors in NFO
+    will_overwrite_comment: bool = False   # True if changing existing actors
+    overwrites_custom_comment: bool = False  # True if danger level
+    tag_count: int = 0                # len(result_people)
+    new_tag_count: int = 0            # len(tags_to_add)
+    file_modified_time: float | None = None  # NFO file mtime
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for JSON API response."""
+        data = asdict(self)
+        data["requires_update"] = self.requires_update
+        # Remove internal fields not needed by UI
+        data.pop("other_actors", None)
+        data.pop("existing_indexium_actors", None)
+        return data
 
     @property
-    def result_comment(self) -> str:
-        """Serialized result actors for UI display."""
-        result = sorted(set(self.db_people), key=str.lower)
-        if not result:
-            return ""
-        return f"People: {', '.join(result)}"
+    def requires_update(self) -> bool:
+        """True if this item needs to be written."""
+        if not self.can_update:
+            return False
+        return bool(self.tags_to_add or self.tags_to_remove)
 ```
 
 ### NfoService
@@ -80,13 +113,20 @@ class NfoPlanItem:
 Core class for reading and writing NFO files:
 
 ```python
+class NfoParseError(Exception):
+    """Raised when NFO file cannot be parsed."""
+    pass
+
 class NfoService:
     def find_nfo_path(self, video_path: str) -> str | None:
         """Find NFO file for a video, checking multiple naming conventions.
 
-        Checks in order:
-        1. <video_name>.nfo / .NFO
-        2. movie.nfo / Movie.nfo (Jellyfin movie convention)
+        Checks in order (returns first match):
+        1. <video_name>.nfo / .NFO (video-specific, preferred)
+        2. movie.nfo / Movie.nfo (shared, may apply to multiple videos)
+
+        Note: Caller must handle shared NFO deduplication when movie.nfo
+        is returned for multiple videos in the same directory.
         """
         base = Path(video_path).stem
         parent = Path(video_path).parent
@@ -103,7 +143,11 @@ class NfoService:
         return None
 
     def read_actors(self, nfo_path: str) -> list[NfoActor]:
-        """Parse NFO XML, return all actors with full structure preserved."""
+        """Parse NFO XML, return all actors with full structure preserved.
+
+        Raises:
+            NfoParseError: If XML is malformed or unreadable
+        """
 
     def write_actors(
         self,
@@ -117,6 +161,9 @@ class NfoService:
         - Preserved original encoding/BOM
         - Minimal formatting changes (remove_blank_text=False)
         - In-place element updates where possible
+
+        Raises:
+            NfoParseError: If XML is malformed
         """
 
     def get_indexium_actors(self, nfo_path: str) -> list[str]:
@@ -140,11 +187,15 @@ class NfoBackupManager:
 
     def cleanup_old_backups(self, max_age_days: int = 30) -> int:
         """Remove backup files older than max_age_days. Returns count removed."""
+
+    def find_backup_path(self, nfo_path: str, operation_id: int) -> str:
+        """Return expected backup path for given NFO and operation."""
+        return f"{nfo_path}.bak.{operation_id}"
 ```
 
 ### NfoPlanner
 
-Builds change plans by comparing DB tags vs NFO actors:
+Builds change plans with shared NFO deduplication:
 
 ```python
 class NfoPlanner:
@@ -154,7 +205,40 @@ class NfoPlanner:
         self._cache_table_ready = False
 
     def build_plan(self, file_hashes: list[str]) -> list[NfoPlanItem]:
-        """For each hash: lookup video path, find NFO, compare actors."""
+        """Build plan for given file hashes.
+
+        Handles shared NFO files (movie.nfo) by:
+        1. Grouping videos by resolved nfo_path
+        2. Merging db_people from all videos sharing an NFO
+        3. Creating one plan item per NFO (not per video)
+        4. Storing the NFO path for rollback reliability
+        """
+
+    def _group_by_nfo(
+        self,
+        file_hashes: list[str],
+        conn: sqlite3.Connection
+    ) -> dict[str, list[tuple[str, str, list[str]]]]:
+        """Group videos by their NFO path.
+
+        Returns: {nfo_path: [(file_hash, video_path, db_people), ...]}
+
+        Videos without NFO are grouped under None key.
+        """
+
+    def _build_item_for_nfo(
+        self,
+        nfo_path: str | None,
+        videos: list[tuple[str, str, list[str]]],
+        conn: sqlite3.Connection
+    ) -> NfoPlanItem:
+        """Build a single plan item for an NFO (possibly shared by multiple videos).
+
+        For shared NFOs:
+        - file_hash is the first video's hash (primary)
+        - db_people is merged from all videos
+        - file_path is the first video's path
+        """
 
     def _ensure_cache_table(self, conn: sqlite3.Connection) -> None:
         """Create nfo_actor_cache table if missing."""
@@ -162,19 +246,21 @@ class NfoPlanner:
     def _get_cached_actors(
         self,
         conn: sqlite3.Connection,
-        file_hash: str,
         nfo_path: str
-    ) -> list[NfoActor] | None:
-        """Return cached actors if NFO hasn't changed, else None."""
+    ) -> tuple[list[NfoActor], float] | None:
+        """Return (cached actors, mtime) if NFO hasn't changed, else None.
+
+        Cache is keyed by nfo_path (not file_hash) to handle shared NFOs.
+        """
 
     def _update_cache(
         self,
         conn: sqlite3.Connection,
-        file_hash: str,
+        nfo_path: str,
         actors: list[NfoActor],
         nfo_mtime: float
     ) -> None:
-        """Update actor cache for file."""
+        """Update actor cache for NFO path."""
 ```
 
 ### Risk Level Determination
@@ -184,6 +270,9 @@ def _determine_risk_level(self, item: NfoPlanItem) -> str:
     if item.nfo_path is None:
         return "blocked"  # No NFO file
 
+    if item.probe_error:
+        return "blocked"  # XML parse error
+
     # Check for corrupted state: actors without source="indexium" that match DB names
     # (shouldn't happen normally, but defensive)
     other_names = {a.name.lower() for a in item.other_actors}
@@ -191,7 +280,7 @@ def _determine_risk_level(self, item: NfoPlanItem) -> str:
     if other_names & db_names:
         return "danger"  # Would modify non-indexium actors
 
-    if item.actors_to_remove:
+    if item.tags_to_remove:
         return "warning"  # Removing previously tagged actors
 
     return "safe"  # Only adding new actors
@@ -221,7 +310,10 @@ class NfoWriter:
         items: list[NfoPlanItem],
         backup: bool = True
     ) -> int:
-        """Create operation record, start background thread, return operation_id."""
+        """Create operation record, start background thread, return operation_id.
+
+        Stores nfo_path in metadata_operation_items for rollback reliability.
+        """
 
     def pause_operation(self, operation_id: int) -> bool:
         """Pause running operation."""
@@ -237,6 +329,15 @@ class NfoWriter:
 
     def _process_loop(self, operation_id: int, backup: bool) -> None:
         """Background thread: process items with pause/cancel checks."""
+
+    def _write_single_item(self, item: NfoPlanItem, operation_id: int, backup: bool) -> None:
+        """Write a single NFO file.
+
+        1. Create backup if enabled
+        2. Read current NFO
+        3. Update actors (remove old indexium, add new)
+        4. Write NFO preserving formatting
+        """
 ```
 
 ### NfoHistoryService
@@ -263,11 +364,16 @@ class NfoHistoryService:
     def rollback_operation(self, operation_id: int) -> dict:
         """Rollback operation using operation-scoped backups.
 
+        Uses nfo_path stored in metadata_operation_items (not recomputed
+        from video path) to ensure correct backup is restored even if
+        NFO files have moved.
+
         For each item:
-        1. Find .nfo.bak.{operation_id} file
-        2. Restore original NFO
-        3. Remove backup
-        4. Update item status to 'rolled_back'
+        1. Read nfo_path from metadata_operation_items
+        2. Find .nfo.bak.{operation_id} file
+        3. Restore original NFO
+        4. Remove backup
+        5. Update item status to 'rolled_back'
         """
 
     def cleanup_old_backups(self, max_age_days: int = 30) -> int:
@@ -280,24 +386,66 @@ class NfoHistoryService:
 
 ```sql
 CREATE TABLE IF NOT EXISTS nfo_actor_cache (
-    file_hash TEXT PRIMARY KEY,
-    actors_json TEXT,      -- JSON array of NfoActor objects
-    nfo_path TEXT,         -- Path to NFO file
-    nfo_mtime REAL,        -- NFO file modification time
+    nfo_path TEXT PRIMARY KEY,     -- Keyed by NFO path, not file_hash
+    actors_json TEXT,              -- JSON array of NfoActor objects
+    nfo_mtime REAL,                -- NFO file modification time
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 ```
 
+**Note**: Cache is keyed by `nfo_path` (not `file_hash`) because multiple videos can share a single `movie.nfo` file.
+
+### Schema Migration: Add `nfo_path` Column
+
+```sql
+-- Add nfo_path column to metadata_operation_items for reliable rollback
+ALTER TABLE metadata_operation_items ADD COLUMN nfo_path TEXT;
+
+-- Index for efficient lookups during rollback
+CREATE INDEX IF NOT EXISTS idx_metadata_items_nfo_path
+    ON metadata_operation_items (nfo_path);
+```
+
+**Migration strategy**:
+- `scanner.py` `ensure_db_schema()` will add the column if missing (SQLite `ALTER TABLE ADD COLUMN` is safe)
+- Existing rows will have `nfo_path = NULL` (old operations can't be rolled back via NFO, but they used ffmpeg anyway)
+
+### Table Creation in scanner.py
+
+Add to `ensure_db_schema()`:
+
+```python
+# NFO actor cache table
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS nfo_actor_cache (
+        nfo_path TEXT PRIMARY KEY,
+        actors_json TEXT,
+        nfo_mtime REAL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+
+# Add nfo_path column to metadata_operation_items if missing
+cursor.execute("PRAGMA table_info(metadata_operation_items)")
+columns = {row[1] for row in cursor.fetchall()}
+if "nfo_path" not in columns:
+    cursor.execute(
+        "ALTER TABLE metadata_operation_items ADD COLUMN nfo_path TEXT"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_metadata_items_nfo_path "
+        "ON metadata_operation_items (nfo_path)"
+    )
+```
+
 ### Existing Tables: Semantic Changes
 
-The following tables keep their schema but change semantics:
+The following columns keep their names but change semantics:
 
 - `metadata_operation_items.previous_comment` - Now stores serialized previous Indexium actors
 - `metadata_operation_items.new_comment` - Now stores serialized new Indexium actors
 - `metadata_history.original_comment` - Now stores full NFO actor section XML
 - `metadata_history.original_metadata_json` - Now stores full NFO XML (for complete restoration)
-
-Note: A future migration could rename these columns for clarity, but this is not required for functionality.
 
 ## Configuration
 
@@ -346,44 +494,81 @@ Minor updates to `templates/metadata_preview.html`:
 "No current comment" → "No current actors"
 "Will overwrite existing custom comment" → "Will modify actors"
 
-// Risk level explanations
+// Risk level explanations (update tooltip/help text)
 const riskDescriptions = {
     safe: "Only adding new actors to NFO",
     warning: "Will remove some previously tagged actors",
     danger: "May affect non-Indexium actors (review carefully)",
-    blocked: "No NFO file found for this video"
+    blocked: "No NFO file found or XML parse error"
 };
+
+// Add removal warning display
+// When item.tags_to_remove is non-empty, show prominently:
+// "Will remove: Alice, Bob"
 ```
 
-Show removal warnings prominently when `actors_to_remove` is non-empty.
+Show removal warnings prominently when `tags_to_remove` is non-empty. This addresses the behavioral change concern.
 
 ## XML Handling
 
-Use `lxml` for robust XML processing:
+Use `lxml` for robust XML processing with error handling:
 
 ```python
 from lxml import etree
 
+class NfoParseError(Exception):
+    """Raised when NFO cannot be parsed."""
+    def __init__(self, path: str, reason: str):
+        self.path = path
+        self.reason = reason
+        super().__init__(f"Failed to parse {path}: {reason}")
+
 class NfoXmlHandler:
     @staticmethod
     def read(path: str) -> tuple[etree._Element, str | None]:
-        """Read NFO file, return (root element, detected encoding)."""
-        # Detect BOM and encoding
-        with open(path, 'rb') as f:
-            raw = f.read()
+        """Read NFO file, return (root element, detected encoding).
 
+        Raises:
+            NfoParseError: If file is not valid XML
+        """
+        try:
+            with open(path, 'rb') as f:
+                raw = f.read()
+        except OSError as e:
+            raise NfoParseError(path, f"Cannot read file: {e}")
+
+        # Detect BOM and encoding
         encoding = None
         if raw.startswith(b'\xef\xbb\xbf'):  # UTF-8 BOM
             raw = raw[3:]
             encoding = 'utf-8-sig'
 
-        parser = etree.XMLParser(remove_blank_text=False)
-        root = etree.fromstring(raw, parser)
-        return root, encoding
+        # Try parsing with recovery mode for slightly malformed XML
+        try:
+            parser = etree.XMLParser(
+                remove_blank_text=False,
+                recover=True  # Attempt to recover from errors
+            )
+            root = etree.fromstring(raw, parser)
+
+            # Check if recovery mode produced a usable result
+            if root is None:
+                raise NfoParseError(path, "XML recovery failed")
+
+            return root, encoding
+
+        except etree.XMLSyntaxError as e:
+            raise NfoParseError(path, f"XML syntax error: {e}")
 
     @staticmethod
     def write(path: str, root: etree._Element, encoding: str | None) -> None:
-        """Write NFO file, preserving original encoding."""
+        """Write NFO file, preserving original encoding.
+
+        Minimizes formatting changes by:
+        - Not pretty-printing
+        - Preserving original encoding declaration
+        - Preserving BOM if present
+        """
         xml_bytes = etree.tostring(
             root,
             encoding=encoding or 'utf-8',
@@ -396,6 +581,74 @@ class NfoXmlHandler:
                 f.write(b'\xef\xbb\xbf')  # Write BOM
             f.write(xml_bytes)
 ```
+
+### Handling Parse Failures
+
+When NFO parsing fails, the plan item is marked as blocked:
+
+```python
+def _build_item_for_nfo(self, nfo_path: str, ...) -> NfoPlanItem:
+    try:
+        actors = self.nfo_service.read_actors(nfo_path)
+    except NfoParseError as e:
+        return NfoPlanItem(
+            # ... other fields ...
+            nfo_path=nfo_path,
+            can_update=False,
+            risk_level="blocked",
+            probe_error=str(e),
+            issues=[f"Cannot parse NFO: {e.reason}"],
+            issue_codes=["nfo_parse_error"],
+        )
+```
+
+## Shared NFO Handling
+
+### The Problem
+
+When using Jellyfin's `movie.nfo` convention, multiple videos in the same directory share one NFO file:
+
+```
+/movies/
+  video1.mp4  → movie.nfo
+  video2.mp4  → movie.nfo (same file!)
+  movie.nfo
+```
+
+This creates issues:
+- Multiple plan items pointing to same NFO
+- Duplicate writes overwriting each other
+- Backup collisions
+- Cache keyed by file_hash is wrong
+
+### The Solution
+
+**Deduplicate by NFO path during planning:**
+
+1. Group all videos by their resolved `nfo_path`
+2. For shared NFOs, merge `db_people` from all videos
+3. Create ONE plan item per unique NFO path
+4. Use `nfo_path` as the cache key (not `file_hash`)
+
+```python
+def build_plan(self, file_hashes: list[str]) -> list[NfoPlanItem]:
+    # Group by NFO path
+    nfo_groups = self._group_by_nfo(file_hashes, conn)
+
+    items = []
+    for nfo_path, videos in nfo_groups.items():
+        if nfo_path is None:
+            # Videos without NFO get individual blocked items
+            for file_hash, video_path, db_people in videos:
+                items.append(self._make_blocked_item(file_hash, video_path))
+        else:
+            # One item per NFO, merging people from all videos
+            items.append(self._build_item_for_nfo(nfo_path, videos, conn))
+
+    return items
+```
+
+**UI consideration**: The plan will show fewer items than videos when NFOs are shared. The UI already handles this (items are per-operation, not per-video).
 
 ## Assumptions and Risks
 
@@ -413,7 +666,17 @@ The new system removes Indexium actors that are no longer in the DB by default. 
 
 - Configure `NFO_REMOVE_STALE_ACTORS=false` to preserve old behavior
 - UI prominently shows "Will remove: X, Y" when removals are planned
+- Risk level is "warning" (not "safe") when removals are planned
 - Rollback is available if removals were unintended
+
+### XML Robustness
+
+Many NFO files in the wild are not well-formed XML. The design handles this by:
+
+- Using `lxml` with `recover=True` for best-effort parsing
+- Marking unparseable NFOs as "blocked" with clear error messages
+- Never modifying files we can't reliably parse
+- Preserving original encoding and BOM to minimize churn
 
 ## Testing Strategy
 
@@ -428,6 +691,8 @@ def test_find_nfo_path_missing_returns_none():
 def test_read_actors_parses_all_actors():
 def test_read_actors_captures_source_attribute():
 def test_read_actors_preserves_full_structure():
+def test_read_actors_malformed_xml_raises():
+def test_read_actors_recovers_minor_errors():
 def test_write_actors_preserves_non_indexium_actors():
 def test_write_actors_replaces_indexium_actors():
 def test_write_actors_preserves_encoding():
@@ -443,23 +708,33 @@ def test_cleanup_old_backups():
 def test_plan_identifies_actors_to_add():
 def test_plan_identifies_actors_to_remove():
 def test_plan_marks_missing_nfo_as_blocked():
+def test_plan_marks_malformed_nfo_as_blocked():
 def test_plan_uses_cache_when_valid():
 def test_plan_risk_level_safe():
 def test_plan_risk_level_warning():
 def test_plan_risk_level_danger():
 def test_plan_risk_level_blocked():
+def test_plan_deduplicates_shared_movie_nfo():
+def test_plan_merges_people_for_shared_nfo():
+def test_plan_item_has_all_ui_fields():
 
 # NfoWriter tests
 def test_start_operation_creates_record():
+def test_start_operation_stores_nfo_path():
 def test_pause_resume_operation():
 def test_cancel_operation():
 def test_write_creates_backup():
 def test_write_updates_nfo_actors():
 
 # NfoHistoryService tests
+def test_rollback_uses_stored_nfo_path():
 def test_rollback_restores_correct_backup():
 def test_rollback_cleans_up_backup_file():
 def test_list_operations_pagination():
+
+# Schema migration tests
+def test_nfo_actor_cache_table_created():
+def test_nfo_path_column_added_to_operation_items():
 ```
 
 ### Test Fixtures: `tests/fixtures/nfo/`
@@ -472,7 +747,9 @@ tests/fixtures/nfo/
 ├── mixed_actors.nfo          # Both Indexium and external actors
 ├── utf8_bom.nfo              # UTF-8 with BOM
 ├── complex_actors.nfo        # Actors with role, thumb, etc.
-└── movie.nfo                 # Jellyfin movie.nfo naming
+├── movie.nfo                 # Jellyfin movie.nfo naming
+├── malformed.nfo             # Invalid XML for error handling tests
+└── recoverable.nfo           # Slightly malformed but recoverable
 ```
 
 ### Modified Test Files
@@ -480,6 +757,7 @@ tests/fixtures/nfo/
 - `tests/test_app.py` - Update metadata route tests to use NFO mocks
 - `tests/test_e2e.py` - Add NFO files to test fixtures, verify NFO output
 - `tests/test_e2e_ui.py` - Update to check NFO-specific UI elements
+- `tests/test_scanner.py` - Add tests for schema migration (nfo_actor_cache, nfo_path column)
 
 ### Integration Test Updates
 
@@ -493,3 +771,5 @@ Extend `e2e_test.py`:
 6. Verify non-Indexium actors preserved
 7. Rollback and verify original NFO restored
 8. Verify backup file cleaned up after rollback
+9. Test shared movie.nfo scenario with multiple videos
+10. Test malformed NFO handling (blocked, not crashed)
