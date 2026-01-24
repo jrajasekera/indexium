@@ -651,3 +651,157 @@ def test_nfo_planner_detects_tags_to_remove(tmp_path, monkeypatch):
     item = items[0]
     assert "Bob" in item.tags_to_remove
     assert item.risk_level == "warning"  # Removal triggers warning
+
+
+# --- NfoWriter tests ---
+
+
+def test_nfo_writer_start_operation(tmp_path, monkeypatch):
+    """NfoWriter starts an operation and writes NFO files."""
+    import sqlite3
+    import time
+
+    from nfo_services import NfoPlanner, NfoService, NfoWriter
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+    nfo = video_dir / "test.nfo"
+    nfo.write_text('<?xml version="1.0"?><movie><title>Test</title></movie>')
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+
+    writer = NfoWriter(db_path)
+    operation_id = writer.start_operation(items)
+
+    assert operation_id > 0
+
+    # Wait for operation to complete
+    for _ in range(50):  # 5 second timeout
+        status = writer.get_operation_status(operation_id)
+        if status and status["status"] == "completed":
+            break
+        time.sleep(0.1)
+
+    # Verify NFO was written
+    service = NfoService()
+    actors = service.read_actors(str(nfo))
+    indexium_actors = [a for a in actors if a.source == "indexium"]
+    assert len(indexium_actors) == 1
+    assert indexium_actors[0].name == "Alice"
+
+
+def test_nfo_writer_creates_backup(tmp_path, monkeypatch):
+    """NfoWriter creates backup before writing."""
+    import sqlite3
+    import time
+
+    from nfo_services import NfoPlanner, NfoWriter
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+    nfo = video_dir / "test.nfo"
+    original_content = '<?xml version="1.0"?><movie><title>Test</title></movie>'
+    nfo.write_text(original_content)
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+
+    writer = NfoWriter(db_path)
+    operation_id = writer.start_operation(items, backup=True)
+
+    # Wait for operation to complete
+    for _ in range(50):
+        status = writer.get_operation_status(operation_id)
+        if status and status["status"] == "completed":
+            break
+        time.sleep(0.1)
+
+    # Verify backup exists
+    backup_path = Path(str(nfo) + f".bak.{operation_id}")
+    assert backup_path.exists()
+
+
+def test_nfo_writer_skips_items_without_updates(tmp_path, monkeypatch):
+    """NfoWriter skips items that don't need updates."""
+    import sqlite3
+    import time
+
+    from nfo_services import NfoPlanner, NfoWriter
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+    # NFO already has Alice as indexium actor
+    nfo = video_dir / "test.nfo"
+    nfo.write_text(
+        '<?xml version="1.0"?><movie><actor source="indexium"><name>Alice</name></actor></movie>'
+    )
+    original_mtime = nfo.stat().st_mtime
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+    assert items[0].requires_update is False
+
+    writer = NfoWriter(db_path)
+    operation_id = writer.start_operation(items)
+
+    # Wait for operation to complete
+    for _ in range(50):
+        status = writer.get_operation_status(operation_id)
+        if status and status["status"] == "completed":
+            break
+        time.sleep(0.1)
+
+    # File should not have been modified
+    assert nfo.stat().st_mtime == original_mtime
