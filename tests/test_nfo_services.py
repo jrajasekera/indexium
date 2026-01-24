@@ -467,3 +467,187 @@ def test_nfo_plan_item_to_dict():
     # Internal fields removed
     assert "other_actors" not in data
     assert "existing_indexium_actors" not in data
+
+
+# --- NfoPlanner tests ---
+
+
+def _setup_planner_db(tmp_path, monkeypatch):
+    """Helper to set up test database for planner tests."""
+    import scanner as scanner_module
+
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setattr(scanner_module.config, "DATABASE_FILE", db_path)
+    monkeypatch.setattr(scanner_module, "DATABASE_FILE", db_path)
+    scanner_module.setup_database()
+    return db_path
+
+
+def test_nfo_planner_build_plan_with_nfo(tmp_path, monkeypatch):
+    """NfoPlanner builds plan for video with NFO file."""
+    import sqlite3
+
+    from nfo_services import NfoPlanner
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    # Create video and NFO
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+    nfo = video_dir / "test.nfo"
+    nfo.write_text('<?xml version="1.0"?><movie><title>Test</title></movie>')
+
+    # Insert scanned file and face with person name
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.file_hash == "hash123"
+    assert item.nfo_path == str(nfo)
+    assert "Alice" in item.db_people
+    assert item.can_update is True
+    assert item.risk_level == "safe"
+
+
+def test_nfo_planner_build_plan_without_nfo(tmp_path, monkeypatch):
+    """NfoPlanner marks video without NFO as blocked."""
+    import sqlite3
+
+    from nfo_services import NfoPlanner
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    # Create video WITHOUT NFO
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.nfo_path is None
+    assert item.can_update is False
+    assert item.risk_level == "blocked"
+
+
+def test_nfo_planner_detects_tags_to_add(tmp_path, monkeypatch):
+    """NfoPlanner correctly identifies new tags to add."""
+    import sqlite3
+
+    from nfo_services import NfoPlanner
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+    # NFO with existing indexium actor "Alice"
+    nfo = video_dir / "test.nfo"
+    nfo.write_text(
+        '<?xml version="1.0"?><movie><actor source="indexium"><name>Alice</name></actor></movie>'
+    )
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    # DB has Alice and Bob
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 2, "0,0,100,100", b"fake_encoding2", "Bob"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+
+    assert len(items) == 1
+    item = items[0]
+    assert "Alice" in item.existing_indexium_actors
+    assert "Bob" in item.tags_to_add
+    assert item.requires_update is True
+
+
+def test_nfo_planner_detects_tags_to_remove(tmp_path, monkeypatch):
+    """NfoPlanner detects when indexium actors need removal."""
+    import sqlite3
+
+    from nfo_services import NfoPlanner
+
+    db_path = _setup_planner_db(tmp_path, monkeypatch)
+
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    video = video_dir / "test.mp4"
+    video.write_bytes(b"fake video")
+    # NFO has Alice and Bob as indexium actors
+    nfo = video_dir / "test.nfo"
+    nfo.write_text(
+        '<?xml version="1.0"?><movie>'
+        '<actor source="indexium"><name>Alice</name></actor>'
+        '<actor source="indexium"><name>Bob</name></actor>'
+        "</movie>"
+    )
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath) VALUES (?, ?)",
+        ("hash123", str(video)),
+    )
+    # DB only has Alice (Bob was untagged)
+    conn.execute(
+        """INSERT INTO faces (file_hash, frame_number, face_location, face_encoding, person_name)
+           VALUES (?, ?, ?, ?, ?)""",
+        ("hash123", 1, "0,0,100,100", b"fake_encoding", "Alice"),
+    )
+    conn.commit()
+    conn.close()
+
+    planner = NfoPlanner(db_path)
+    items = planner.build_plan(["hash123"])
+
+    assert len(items) == 1
+    item = items[0]
+    assert "Bob" in item.tags_to_remove
+    assert item.risk_level == "warning"  # Removal triggers warning

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import sqlite3
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -264,3 +266,164 @@ class NfoPlanItem:
         if not self.can_update:
             return False
         return bool(self.tags_to_add or self.tags_to_remove)
+
+
+class NfoPlanner:
+    """Builds change plans for NFO metadata updates."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.nfo_service = NfoService()
+
+    def build_plan(self, file_hashes: list[str]) -> list[NfoPlanItem]:
+        """Build plan for given file hashes.
+
+        Creates ONE plan item PER VIDEO (not per NFO) to preserve UI/API contract.
+        """
+        if not file_hashes:
+            return []
+
+        items = []
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            for file_hash in file_hashes:
+                item = self._build_item_for_hash(file_hash, conn)
+                if item:
+                    items.append(item)
+
+        return items
+
+    def _build_item_for_hash(self, file_hash: str, conn: sqlite3.Connection) -> NfoPlanItem | None:
+        """Build a plan item for a single file hash."""
+        # Get video info
+        row = conn.execute(
+            "SELECT file_hash, last_known_filepath FROM scanned_files WHERE file_hash = ?",
+            (file_hash,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        video_path = row["last_known_filepath"]
+        file_name = os.path.basename(video_path) if video_path else None
+        file_ext = os.path.splitext(video_path)[1] if video_path else None
+
+        # Get people from DB (faces + video_people)
+        db_people = self._get_db_people(file_hash, conn)
+
+        # Find NFO file
+        nfo_path = self.nfo_service.find_nfo_path(video_path) if video_path else None
+
+        # Read existing actors from NFO
+        existing_indexium_actors: list[str] = []
+        other_actors: list[NfoActor] = []
+        probe_error: str | None = None
+        nfo_mtime: float | None = None
+
+        if nfo_path:
+            try:
+                nfo_mtime = os.path.getmtime(nfo_path)
+                all_actors = self.nfo_service.read_actors(nfo_path)
+                for actor in all_actors:
+                    if actor.source == "indexium":
+                        existing_indexium_actors.append(actor.name)
+                    else:
+                        other_actors.append(actor)
+            except NfoParseError as e:
+                probe_error = str(e)
+
+        # Calculate changes
+        db_set = set(db_people)
+        existing_set = set(existing_indexium_actors)
+
+        tags_to_add = sorted(db_set - existing_set, key=str.lower)
+        tags_to_remove = sorted(existing_set - db_set, key=str.lower)
+        result_people = sorted(db_set, key=str.lower)
+
+        # Determine risk level and can_update
+        can_update = nfo_path is not None and probe_error is None
+        risk_level = self._determine_risk_level(
+            nfo_path, probe_error, other_actors, db_people, tags_to_remove
+        )
+
+        # Build comment strings for UI compatibility
+        existing_comment = ", ".join(sorted(existing_indexium_actors, key=str.lower)) or None
+        result_comment = ", ".join(result_people)
+
+        # Non-indexium actors in NFO (for UI display)
+        metadata_only_people = [a.name for a in other_actors]
+
+        return NfoPlanItem(
+            file_hash=file_hash,
+            file_path=video_path,
+            file_name=file_name,
+            file_extension=file_ext,
+            nfo_path=nfo_path,
+            db_people=db_people,
+            existing_people=list(existing_indexium_actors),
+            result_people=result_people,
+            tags_to_add=tags_to_add,
+            tags_to_remove=tags_to_remove,
+            existing_indexium_actors=list(existing_indexium_actors),
+            other_actors=other_actors,
+            existing_comment=existing_comment,
+            result_comment=result_comment,
+            risk_level=risk_level,
+            can_update=can_update,
+            probe_error=probe_error,
+            metadata_only_people=metadata_only_people,
+            will_overwrite_comment=bool(existing_indexium_actors and tags_to_remove),
+            overwrites_custom_comment=risk_level == "danger",
+            tag_count=len(result_people),
+            new_tag_count=len(tags_to_add),
+            file_modified_time=nfo_mtime,
+        )
+
+    def _get_db_people(self, file_hash: str, conn: sqlite3.Connection) -> list[str]:
+        """Get all people tagged for this video in DB."""
+        people = set()
+
+        # From faces table
+        rows = conn.execute(
+            "SELECT DISTINCT person_name FROM faces WHERE file_hash = ? AND person_name IS NOT NULL",
+            (file_hash,),
+        ).fetchall()
+        for row in rows:
+            people.add(row[0])
+
+        # From video_people table (manual tagging)
+        rows = conn.execute(
+            "SELECT DISTINCT person_name FROM video_people WHERE file_hash = ?",
+            (file_hash,),
+        ).fetchall()
+        for row in rows:
+            people.add(row[0])
+
+        return sorted(people, key=str.lower)
+
+    def _determine_risk_level(
+        self,
+        nfo_path: str | None,
+        probe_error: str | None,
+        other_actors: list[NfoActor],
+        db_people: list[str],
+        tags_to_remove: list[str],
+    ) -> str:
+        """Determine risk level for this item."""
+        if nfo_path is None:
+            return "blocked"  # No NFO file
+
+        if probe_error:
+            return "blocked"  # XML parse error
+
+        # Check for corrupted state: non-indexium actors that match DB names
+        other_names = {a.name.lower() for a in other_actors}
+        db_names = {n.lower() for n in db_people}
+        if other_names & db_names:
+            return "danger"  # Would modify non-indexium actors
+
+        if tags_to_remove:
+            return "warning"  # Removing previously tagged actors
+
+        return "safe"  # Only adding new actors
