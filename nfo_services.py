@@ -772,3 +772,120 @@ class NfoWriter:
                 (operation_id,),
             )
             conn.commit()
+
+
+class NfoHistoryService:
+    """Service for querying operation history and performing rollbacks."""
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+        self.backup_manager = NfoBackupManager()
+
+    def list_operations(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        status_filter: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return recent operations for history UI."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            where = ""
+            params: list[Any] = []
+            if status_filter:
+                where = "WHERE status = ?"
+                params.append(status_filter)
+
+            # Get total count
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM metadata_operations {where}",  # noqa: S608
+                params,
+            ).fetchone()[0]
+
+            # Get operations
+            rows = conn.execute(
+                f"SELECT * FROM metadata_operations {where} "  # noqa: S608
+                "ORDER BY started_at DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+
+            return [dict(row) for row in rows], total
+
+    def get_operation_detail(self, operation_id: int) -> dict[str, Any] | None:
+        """Get full operation details including items."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            op_row = conn.execute(
+                "SELECT * FROM metadata_operations WHERE id = ?",
+                (operation_id,),
+            ).fetchone()
+            if not op_row:
+                return None
+
+            items = conn.execute(
+                "SELECT * FROM metadata_operation_items WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchall()
+
+            return {
+                "operation": dict(op_row),
+                "items": [dict(item) for item in items],
+            }
+
+    def rollback_operation(self, operation_id: int) -> dict[str, Any]:
+        """Rollback operation using operation-scoped backups."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # Check operation exists and is rollback-able
+            op = conn.execute(
+                "SELECT * FROM metadata_operations WHERE id = ?",
+                (operation_id,),
+            ).fetchone()
+
+            if not op:
+                return {"success": False, "error": "Operation not found"}
+
+            if op["status"] not in ("completed", "failed"):
+                return {"success": False, "error": "Operation not in rollback-able state"}
+
+            # Get items with nfo_path
+            items = conn.execute(
+                "SELECT * FROM metadata_operation_items WHERE operation_id = ? AND nfo_path IS NOT NULL",
+                (operation_id,),
+            ).fetchall()
+
+            restored = 0
+            failed = 0
+            restored_nfos: set[str] = set()
+
+            for item in items:
+                nfo_path = item["nfo_path"]
+                if not nfo_path or nfo_path in restored_nfos:
+                    continue
+
+                if self.backup_manager.restore_backup(nfo_path, operation_id):
+                    self.backup_manager.cleanup_backup(nfo_path, operation_id)
+                    restored += 1
+                    restored_nfos.add(nfo_path)
+                else:
+                    failed += 1
+
+            # Update operation status
+            conn.execute(
+                "UPDATE metadata_operations SET status = 'rolled_back' WHERE id = ?",
+                (operation_id,),
+            )
+            conn.execute(
+                "UPDATE metadata_operation_items SET status = 'rolled_back' WHERE operation_id = ?",
+                (operation_id,),
+            )
+            conn.commit()
+
+            return {
+                "success": True,
+                "restored": restored,
+                "failed": failed,
+            }
