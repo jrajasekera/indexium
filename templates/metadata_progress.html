@@ -131,10 +131,10 @@
                         </div>
                         <span class="${badgeClass}">${escapeHtml(item.status)}</span>
                     </div>
-                    <dl class="grid gap-2 md:grid-cols-3 text-sm text-base-content/70">
-                        <div><dt class="uppercase text-xs">File Hash</dt><dd>${escapeHtml(item.file_hash)}</dd></div>
-                        <div><dt class="uppercase text-xs">Processed</dt><dd>${escapeHtml(processed)}</dd></div>
-                        <div><dt class="uppercase text-xs">Tags Added</dt><dd>${escapeHtml(added)}</dd></div>
+                    <dl class="grid gap-4 md:grid-cols-3 text-sm text-base-content/70">
+                        <div class="min-w-0"><dt class="uppercase text-xs">File Hash</dt><dd class="truncate" title="${escapeHtml(item.file_hash)}">${escapeHtml(item.file_hash)}</dd></div>
+                        <div class="min-w-0"><dt class="uppercase text-xs">Processed</dt><dd>${escapeHtml(processed)}</dd></div>
+                        <div class="min-w-0"><dt class="uppercase text-xs">Tags Added</dt><dd>${escapeHtml(added)}</dd></div>
                     </dl>
                     ${errorBlock}
                 </article>
