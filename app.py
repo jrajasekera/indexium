@@ -1137,7 +1137,8 @@ def manual_video_next():
     """Redirects to the next video requiring manual tagging."""
     _manual_feature_guard()
     conn = get_db_connection()
-    next_hash = _get_next_manual_video(conn)
+    exclude_hash = request.args.get("exclude")
+    next_hash = _get_next_manual_video(conn, exclude_hash=exclude_hash)
     if not next_hash:
         flash("No videos waiting for manual tagging.", "info")
         return redirect(url_for("manual_video_dashboard"))
