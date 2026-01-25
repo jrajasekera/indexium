@@ -474,6 +474,27 @@ class NfoPlanner:
                 if item.file_extension and item.file_extension.lower() in normalized_types
             ]
 
+        # Search filter - matches file name, people, or file hash
+        search = (filters.get("search") or "").strip().lower()
+        if search:
+            filtered = [
+                item
+                for item in filtered
+                if search in (item.file_name or "").lower()
+                or any(search in person.lower() for person in item.result_people)
+                or search in (item.file_hash or "").lower()
+            ]
+
+        # Issue codes filter
+        issue_codes = filters.get("issue_codes")
+        if issue_codes:
+            wanted = {code.lower() for code in issue_codes}
+            filtered = [
+                item
+                for item in filtered
+                if wanted.intersection(code.lower() for code in item.issue_codes)
+            ]
+
         return filtered
 
     def sort_items(
@@ -507,6 +528,20 @@ class NfoPlanner:
             return sorted(
                 items,
                 key=lambda item: (item.file_name or item.file_hash).lower(),
+                reverse=reverse,
+            )
+        # Alphabetical sort (maps to file_name sort)
+        if sort_by == "alphabetical":
+            return sorted(
+                items,
+                key=lambda item: (item.file_name or item.file_hash).lower(),
+                reverse=reverse,
+            )
+        # Modified time sort
+        if sort_by == "modified":
+            return sorted(
+                items,
+                key=lambda item: (item.file_modified_time or 0.0, item.file_name or item.file_hash),
                 reverse=reverse,
             )
         return list(items)
