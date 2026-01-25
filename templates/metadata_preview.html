@@ -377,15 +377,18 @@
                             <span class="text-xs text-base-content/40 font-mono truncate max-w-[200px]" title="${escapeHtml(item.file_hash)}">${escapeHtml(item.file_hash.slice(0, 16))}...</span>
                         </div>
                     </div>
-                    <div class="grid gap-4 md:grid-cols-2">
+                    <div class="grid gap-4 md:grid-cols-3">
                         <div class="bg-base-200/50 rounded-lg p-3">
                             <p class="text-xs uppercase text-base-content/50 font-semibold mb-1">Current</p>
                             <p class="text-sm">${currentActors}</p>
                         </div>
                         <div class="bg-base-200/50 rounded-lg p-3">
+                            <p class="text-xs uppercase text-base-content/50 font-semibold mb-1">Changes</p>
+                            <p class="text-sm">${changeSummary || '<span class="text-base-content/60">(no changes)</span>'}</p>
+                        </div>
+                        <div class="bg-base-200/50 rounded-lg p-3">
                             <p class="text-xs uppercase text-base-content/50 font-semibold mb-1">After Write</p>
                             <p class="text-sm">${afterActors}</p>
-                            ${changeSummary ? `<p class="text-xs mt-1">${changeSummary}</p>` : ''}
                         </div>
                     </div>
                     <div class="alert alert-info text-xs py-2" role="status">${issues}</div>
