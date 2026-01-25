@@ -62,60 +62,6 @@
         </div>
 
         <div class="space-y-6 order-1 lg:order-none">
-            {% if video_text_entries %}
-            <div class="card bg-base-100 shadow-lg">
-                <div class="card-body space-y-4">
-                    <div class="flex items-center justify-between">
-                        <h2 class="card-title">Extracted Text</h2>
-                        <span class="badge badge-outline">{{ video_text_entries|length }} item{{ 's' if video_text_entries|length != 1 else '' }}</span>
-                    </div>
-                    {% if video_text_top_fragments %}
-                    <div>
-                        <h3 class="font-semibold text-sm text-base-content/70 uppercase tracking-wide">Top Substrings</h3>
-                        <div class="flex flex-col gap-2">
-                            {% for fragment in video_text_top_fragments %}
-                            <div class="flex items-start gap-3 rounded-xl bg-base-200/80 p-3">
-                                <div class="flex-1">
-                                    <p class="text-sm font-medium" title="{{ fragment.substring }}">{{ fragment.substring }}</p>
-                                    <p class="text-xs text-base-content/60">Seen {{ fragment.count }} time{{ 's' if fragment.count != 1 else '' }} · {{ fragment.length }} chars</p>
-                                </div>
-                                <button type="button"
-                                        class="btn btn-xs btn-outline copy-snippet"
-                                        data-copy-text="{{ fragment.substring }}">
-                                    Copy
-                                </button>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
-                    <details class="collapse collapse-arrow bg-base-200/50">
-                        <summary class="collapse-title text-sm font-semibold">View All Text</summary>
-                        <div class="collapse-content space-y-2">
-                            {% for entry in video_text_entries %}
-                            <div class="flex items-start gap-3 rounded-xl bg-base-200/80 p-3">
-                                <span class="flex-1 text-sm leading-relaxed" title="{{ entry.raw_text }}">{{ entry.raw_text }}</span>
-                                <div class="flex flex-col items-end gap-1 text-xs text-base-content/60">
-                                    {% if entry.confidence is not none %}
-                                    <span>Conf {{ (entry.confidence or 0) * 100 | round(0) }}%</span>
-                                    {% endif %}
-                                    {% if entry.occurrence_count %}
-                                    <span>{{ entry.occurrence_count }}× seen</span>
-                                    {% endif %}
-                                    <button type="button"
-                                            class="btn btn-xs btn-outline copy-snippet"
-                                            data-copy-text="{{ entry.raw_text }}">
-                                        Copy
-                                    </button>
-                                </div>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </details>
-                </div>
-            </div>
-            {% endif %}
-
             <div class="card bg-base-100 shadow-lg">
                 <div class="card-body space-y-4">
                     <h2 class="card-title">Tagged People</h2>
@@ -201,6 +147,60 @@
                     </form>
                 </div>
             </div>
+
+            {% if video_text_entries %}
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title">Extracted Text</h2>
+                        <span class="badge badge-outline">{{ video_text_entries|length }} item{{ 's' if video_text_entries|length != 1 else '' }}</span>
+                    </div>
+                    {% if video_text_top_fragments %}
+                    <div>
+                        <h3 class="font-semibold text-sm text-base-content/70 uppercase tracking-wide">Top Substrings</h3>
+                        <div class="flex flex-col gap-2">
+                            {% for fragment in video_text_top_fragments %}
+                            <div class="flex items-start gap-3 rounded-xl bg-base-200/80 p-3">
+                                <div class="flex-1">
+                                    <p class="text-sm font-medium" title="{{ fragment.substring }}">{{ fragment.substring }}</p>
+                                    <p class="text-xs text-base-content/60">Seen {{ fragment.count }} time{{ 's' if fragment.count != 1 else '' }} · {{ fragment.length }} chars</p>
+                                </div>
+                                <button type="button"
+                                        class="btn btn-xs btn-outline copy-snippet"
+                                        data-copy-text="{{ fragment.substring }}">
+                                    Copy
+                                </button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    <details class="collapse collapse-arrow bg-base-200/50">
+                        <summary class="collapse-title text-sm font-semibold">View All Text</summary>
+                        <div class="collapse-content space-y-2">
+                            {% for entry in video_text_entries %}
+                            <div class="flex items-start gap-3 rounded-xl bg-base-200/80 p-3">
+                                <span class="flex-1 text-sm leading-relaxed" title="{{ entry.raw_text }}">{{ entry.raw_text }}</span>
+                                <div class="flex flex-col items-end gap-1 text-xs text-base-content/60">
+                                    {% if entry.confidence is not none %}
+                                    <span>Conf {{ (entry.confidence or 0) * 100 | round(0) }}%</span>
+                                    {% endif %}
+                                    {% if entry.occurrence_count %}
+                                    <span>{{ entry.occurrence_count }}× seen</span>
+                                    {% endif %}
+                                    <button type="button"
+                                            class="btn btn-xs btn-outline copy-snippet"
+                                            data-copy-text="{{ entry.raw_text }}">
+                                        Copy
+                                    </button>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
