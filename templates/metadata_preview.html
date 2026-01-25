@@ -52,8 +52,9 @@
 
     <div class="card bg-base-100 shadow-lg">
         <div class="card-body space-y-4">
+            <!-- Row 1: Always visible controls -->
             <div class="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-end md:justify-between">
-                <div class="w-full md:max-w-lg">
+                <div class="w-full md:max-w-md">
                     <label class="label" for="planner-search"><span class="label-text">Search</span></label>
                     <div class="relative">
                         <input id="planner-search" type="search" placeholder="Find by filename, person, or hash" class="input input-bordered w-full pr-12" autocomplete="off">
@@ -69,10 +70,26 @@
                         <button type="button" class="btn btn-sm btn-outline" data-filter-risk="blocked">Blocked</button>
                     </div>
                 </div>
-                <div class="flex gap-3">
+                <div>
+                    <label class="label"><span class="label-text">Conflicts</span></label>
+                    <div id="planner-conflict-options" class="flex flex-wrap gap-2">
+                        <p class="text-sm text-base-content/50">Loaded after plan fetch…</p>
+                    </div>
+                </div>
+                <button type="button" id="toggle-advanced-filters" class="btn btn-ghost btn-sm gap-1">
+                    <span id="toggle-filters-text">More filters</span>
+                    <svg id="toggle-filters-icon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Collapsible: Advanced filters (hidden by default) -->
+            <div id="advanced-filters-section" class="hidden">
+                <div class="grid gap-4 md:grid-cols-4">
                     <div>
                         <label class="label" for="planner-sort"><span class="label-text">Sort by</span></label>
-                        <select id="planner-sort" class="select select-bordered">
+                        <select id="planner-sort" class="select select-bordered w-full">
                             <option value="alphabetical:asc">Filename (A → Z)</option>
                             <option value="alphabetical:desc">Filename (Z → A)</option>
                             <option value="risk:desc">Risk (High → Low)</option>
@@ -84,36 +101,30 @@
                     </div>
                     <div>
                         <label class="label" for="planner-page-size"><span class="label-text">Per page</span></label>
-                        <select id="planner-page-size" class="select select-bordered">
+                        <select id="planner-page-size" class="select select-bordered w-full">
                             <option value="20">20</option>
                             <option value="50" selected>50</option>
                             <option value="100">100</option>
                         </select>
                     </div>
-                </div>
-            </div>
-            <div class="grid gap-4 md:grid-cols-3" id="planner-advanced-filters">
-                <div>
-                    <label class="label" for="planner-file-type"><span class="label-text">File type</span></label>
-                    <select id="planner-file-type" class="select select-bordered w-full">
-                        <option value="">All types</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="label"><span class="label-text">Actor count</span></label>
-                    <div class="flex items-center gap-2">
-                        <input type="number" min="0" id="planner-tag-min" class="input input-bordered w-full" placeholder="Min">
-                        <span class="text-sm text-base-content/60">to</span>
-                        <input type="number" min="0" id="planner-tag-max" class="input input-bordered w-full" placeholder="Max">
+                    <div>
+                        <label class="label" for="planner-file-type"><span class="label-text">File type</span></label>
+                        <select id="planner-file-type" class="select select-bordered w-full">
+                            <option value="">All types</option>
+                        </select>
                     </div>
-                </div>
-                <div>
-                    <label class="label"><span class="label-text">Conflicts</span></label>
-                    <div id="planner-conflict-options" class="flex flex-wrap gap-2">
-                        <p class="text-sm text-base-content/50">Loaded after plan fetch…</p>
+                    <div>
+                        <label class="label"><span class="label-text">Actor count</span></label>
+                        <div class="flex items-center gap-2">
+                            <input type="number" min="0" id="planner-tag-min" class="input input-bordered w-full" placeholder="Min">
+                            <span class="text-sm text-base-content/60">to</span>
+                            <input type="number" min="0" id="planner-tag-max" class="input input-bordered w-full" placeholder="Max">
+                        </div>
                     </div>
                 </div>
             </div>
+
+            <!-- Row 2: Bulk selection buttons (always visible) -->
             <div class="flex flex-wrap gap-2" role="group" aria-label="Bulk selection">
                 <button type="button" class="btn btn-outline btn-sm" data-select-action="all">Select All (page)</button>
                 <button type="button" class="btn btn-outline btn-sm" data-select-action="none">Select None</button>
@@ -202,6 +213,10 @@
         loadingText: document.getElementById('planner-loading-text'),
         writeButton: document.getElementById('write-selected-btn'),
         writeForm: document.getElementById('metadata-write-form'),
+        toggleFiltersBtn: document.getElementById('toggle-advanced-filters'),
+        toggleFiltersText: document.getElementById('toggle-filters-text'),
+        toggleFiltersIcon: document.getElementById('toggle-filters-icon'),
+        advancedFiltersSection: document.getElementById('advanced-filters-section'),
     };
 
     const riskLabels = {
@@ -608,6 +623,23 @@
         });
         elements.writeForm.submit();
     });
+
+    // Toggle advanced filters
+    let filtersExpanded = localStorage.getItem('advancedFiltersExpanded') === 'true';
+
+    function updateToggleState() {
+        elements.advancedFiltersSection.classList.toggle('hidden', !filtersExpanded);
+        elements.toggleFiltersText.textContent = filtersExpanded ? 'Fewer filters' : 'More filters';
+        elements.toggleFiltersIcon.classList.toggle('rotate-180', filtersExpanded);
+    }
+
+    elements.toggleFiltersBtn.addEventListener('click', () => {
+        filtersExpanded = !filtersExpanded;
+        localStorage.setItem('advancedFiltersExpanded', filtersExpanded);
+        updateToggleState();
+    });
+
+    updateToggleState();
 
     fetchPlan();
 })();
