@@ -742,13 +742,20 @@ class NfoWriter:
             else:
                 totals["pending"] += 1
 
+            file_path = row["file_path"]
+            file_name = os.path.basename(file_path) if file_path else row["file_hash"]
+            tags_added_raw = row["tags_added"]
+            tags_added = tags_added_raw.split(",") if tags_added_raw else []
+
             items.append(
                 {
                     "id": row["id"],
                     "file_hash": row["file_hash"],
-                    "file_path": row["file_path"],
+                    "file_path": file_path,
+                    "file_name": file_name,
                     "nfo_path": row["nfo_path"],
                     "status": status,
+                    "tags_added": tags_added,
                     "error_message": row["error_message"],
                     "processed_at": row["processed_at"],
                 }
