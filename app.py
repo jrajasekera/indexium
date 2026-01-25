@@ -515,7 +515,9 @@ def api_get_metadata_plan():
     sort_by = sort_payload.get("by") or request.args.get("sort")
     sort_dir = sort_payload.get("direction") or request.args.get("direction", "asc")
 
-    items = nfo_planner.build_plan(file_hashes)
+    all_items = nfo_planner.build_plan(file_hashes)
+    # Only show files that actually need updates (have a diff)
+    items = [item for item in all_items if item.requires_update]
     filtered_items = nfo_planner.filter_items(items, filters)
     sorted_items = nfo_planner.sort_items(filtered_items, sort_by=sort_by, direction=sort_dir)
     total_items = len(filtered_items)
@@ -523,14 +525,12 @@ def api_get_metadata_plan():
     end = start + per_page
     paginated_items = sorted_items[start:end]
 
-    # Compute statistics inline
+    # Compute statistics (items already filtered to only those requiring updates)
     total_files = len(items)
     safe_count = sum(1 for item in items if item.risk_level == "safe" and item.can_update)
     warning_count = sum(1 for item in items if item.risk_level == "warning" and item.can_update)
     danger_count = sum(1 for item in items if item.risk_level == "danger" and item.can_update)
     blocked_count = sum(1 for item in items if not item.can_update)
-    requires_update_count = sum(1 for item in items if item.requires_update)
-    no_changes_count = sum(1 for item in items if item.can_update and not item.requires_update)
 
     # Compute categories inline
     categories = {
@@ -548,12 +548,10 @@ def api_get_metadata_plan():
         "items": [_serialize_plan_item(item) for item in paginated_items],
         "statistics": {
             "total_files": total_files,
-            "safe": safe_count,
-            "warning": warning_count,
-            "danger": danger_count,
-            "blocked": blocked_count,
-            "requires_update": requires_update_count,
-            "no_changes": no_changes_count,
+            "safe_count": safe_count,
+            "warning_count": warning_count,
+            "danger_count": danger_count,
+            "blocked_count": blocked_count,
         },
         "categories": categories,
         "pagination": {
