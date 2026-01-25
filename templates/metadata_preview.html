@@ -35,7 +35,7 @@
             <div class="divider"></div>
             <div class="grid gap-4 md:grid-cols-3" aria-live="polite">
                 <div class="bg-base-200 rounded-xl p-4">
-                    <p class="text-sm text-base-content/60">People tags ready to write</p>
+                    <p class="text-sm text-base-content/60">Actors to add</p>
                     <p class="text-2xl font-semibold" id="summary-new-tags">-</p>
                 </div>
                 <div class="bg-base-200 rounded-xl p-4">
@@ -73,8 +73,8 @@
                             <option value="alphabetical:asc">Filename (A → Z)</option>
                             <option value="alphabetical:desc">Filename (Z → A)</option>
                             <option value="risk:desc">Risk (High → Low)</option>
-                            <option value="tag_count:desc">Tag Count (High → Low)</option>
-                            <option value="tag_count:asc">Tag Count (Low → High)</option>
+                            <option value="tag_count:desc">Actor Count (High → Low)</option>
+                            <option value="tag_count:asc">Actor Count (Low → High)</option>
                             <option value="modified:desc">Modified (New → Old)</option>
                             <option value="modified:asc">Modified (Old → New)</option>
                         </select>
@@ -97,7 +97,7 @@
                     </select>
                 </div>
                 <div>
-                    <label class="label"><span class="label-text">Tag count</span></label>
+                    <label class="label"><span class="label-text">Actor count</span></label>
                     <div class="flex items-center gap-2">
                         <input type="number" min="0" id="planner-tag-min" class="input input-bordered w-full" placeholder="Min">
                         <span class="text-sm text-base-content/60">to</span>
@@ -261,7 +261,7 @@
         if (state.filters.tag_count.min !== null || state.filters.tag_count.max !== null) {
             const min = state.filters.tag_count.min ?? 'any';
             const max = state.filters.tag_count.max ?? 'any';
-            scopeParts.push(`Tags: ${min} – ${max}`);
+            scopeParts.push(`Actors: ${min} – ${max}`);
         }
         elements.summaryScope.textContent = scopeParts.length ? scopeParts.join(' · ') : 'All files';
     }
@@ -345,10 +345,19 @@
         readyItems.forEach((item) => {
             const selected = state.selected.has(item.file_hash);
             const risk = riskLabels[item.risk_level] || riskLabels.safe;
-            const added = item.tags_to_add.length ? item.tags_to_add.map(escapeHtml).join(', ') : 'No new tags';
-            const existing = item.existing_comment ? escapeHtml(item.existing_comment) : '<span class="text-base-content/60">No current actors</span>';
+            const currentActors = item.existing_comment ? escapeHtml(item.existing_comment) : '<span class="text-base-content/60">(empty)</span>';
+            const afterActors = item.result_comment ? escapeHtml(item.result_comment) : '<span class="text-base-content/60">(empty)</span>';
             const issues = item.issues.length ? item.issues.map(escapeHtml).join(' • ') : 'Ready to write';
-            const metadataOnly = item.metadata_only_people.length ? `Existing metadata also lists: ${item.metadata_only_people.map(escapeHtml).join(', ')}` : '';
+
+            // Build change summary
+            const changes = [];
+            if (item.tags_to_add.length) {
+                changes.push(`<span class="text-success">+ ${item.tags_to_add.map(escapeHtml).join(', ')}</span>`);
+            }
+            if (item.tags_to_remove.length) {
+                changes.push(`<span class="text-error">− ${item.tags_to_remove.map(escapeHtml).join(', ')}</span>`);
+            }
+            const changeSummary = changes.length ? changes.join('&nbsp;&nbsp;') : '';
             fragments.push(`
                 <article class="border border-base-200 rounded-2xl p-5 space-y-4 shadow-sm transition hover:border-primary" data-file-hash="${item.file_hash}">
                     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -357,7 +366,7 @@
                             <div>
                                 <p class="text-lg font-semibold text-base-content">${escapeHtml(item.name || item.file_hash)}</p>
                                 <p class="text-xs text-base-content/60 break-all">${escapeHtml(item.path || 'Path unavailable')}</p>
-                                <p class="text-xs text-base-content/70">${item.tag_count} tag${item.tag_count === 1 ? '' : 's'} planned</p>
+                                <p class="text-xs text-base-content/70">${item.tag_count} actor${item.tag_count === 1 ? '' : 's'} after write</p>
                             </div>
                         </div>
                         <div class="flex flex-col items-end gap-2">
@@ -366,29 +375,17 @@
                         </div>
                     </div>
                     <div class="grid gap-4 md:grid-cols-2">
-                        <div class="space-y-3">
-                            <div>
-                                <p class="text-xs uppercase text-base-content/50 font-semibold">Database tags</p>
-                                <p class="text-sm">${item.db_people.length ? item.db_people.map(escapeHtml).join(', ') : 'None'}</p>
-                            </div>
-                            <div>
-                                <p class="text-xs uppercase text-base-content/50 font-semibold">New tags</p>
-                                <p class="text-sm text-success">${added}</p>
-                            </div>
-                            ${metadataOnly ? `<p class="text-xs text-base-content/60">${metadataOnly}</p>` : ''}
+                        <div>
+                            <p class="text-xs uppercase text-base-content/50 font-semibold">Current</p>
+                            <p class="text-sm">${currentActors}</p>
                         </div>
-                        <div class="space-y-3">
-                            <div>
-                                <p class="text-xs uppercase text-base-content/50 font-semibold">Existing actors</p>
-                                <p class="text-sm">${existing}</p>
-                            </div>
-                            <div>
-                                <p class="text-xs uppercase text-base-content/50 font-semibold">Planned actors</p>
-                                <p class="text-sm">${escapeHtml(item.result_comment)}</p>
-                            </div>
-                            <div class="alert alert-info text-xs py-2" role="status">${issues}</div>
+                        <div>
+                            <p class="text-xs uppercase text-base-content/50 font-semibold">After Write</p>
+                            <p class="text-sm">${afterActors}</p>
+                            ${changeSummary ? `<p class="text-xs mt-1">${changeSummary}</p>` : ''}
                         </div>
                     </div>
+                    <div class="alert alert-info text-xs py-2" role="status">${issues}</div>
                 </article>
             `);
         });
