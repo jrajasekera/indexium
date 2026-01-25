@@ -385,8 +385,14 @@ def _suggest_manual_person_name(
             continue
 
         expected_length = len(name_tokens)
+        spaceless_name = normalized_name.replace(" ", "")
 
         for source, _candidate_norm, tokens in prepared_candidates:
+            # Check if concatenated name appears as substring (e.g., "timothyjones" matches "Timothy Jones")
+            spaceless_candidate = _candidate_norm.replace(" ", "")
+            if spaceless_name in spaceless_candidate:
+                return name, 0.95, source
+
             windows = _candidate_windows(tokens, expected_length)
             for window in windows:
                 if not window:
