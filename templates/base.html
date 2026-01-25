@@ -423,18 +423,18 @@
                     <span>Tag Groups</span>
                 </a>
 
-                <a href="{{ url_for('list_people') }}" class="nav-link {% if request.endpoint == 'list_people' or request.endpoint == 'person_details' %}active{% endif %}">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
-                    </svg>
-                    <span>People</span>
-                </a>
-
                 <a href="{{ url_for('manual_video_dashboard') }}" class="nav-link {% if request.endpoint and request.endpoint.startswith('manual_video') %}active{% endif %}">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v12H5a2 2 0 01-2-2V8a2 2 0 012-2z"></path>
                     </svg>
                     <span>Manual Tagging</span>
+                </a>
+
+                <a href="{{ url_for('list_people') }}" class="nav-link {% if request.endpoint == 'list_people' or request.endpoint == 'person_details' %}active{% endif %}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path>
+                    </svg>
+                    <span>People</span>
                 </a>
 
                 <div class="divider my-4"></div>
