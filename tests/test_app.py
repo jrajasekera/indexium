@@ -1147,6 +1147,45 @@ def test_manual_video_next_no_pending(tmp_path, monkeypatch):
         assert "/videos/manual" in resp.headers["Location"]
 
 
+def test_manual_video_next_excludes_current(tmp_path, monkeypatch):
+    """Should skip current video when exclude parameter is provided."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        ("hash1", str(tmp_path / "video1.mp4"), "in_progress", 0),
+    )
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        ("hash2", str(tmp_path / "video2.mp4"), "pending", 0),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        # Without exclude, should get hash1 (in_progress comes after pending in ordering but still matches)
+        resp = client.get("/videos/manual/next?exclude=hash1", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "hash2" in resp.headers["Location"]
+        assert "hash1" not in resp.headers["Location"]
+
+
+def test_manual_video_next_exclude_only_video(tmp_path, monkeypatch):
+    """Should redirect to dashboard when excluding the only pending video."""
+    db_path = setup_app_db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO scanned_files (file_hash, last_known_filepath, manual_review_status, face_count) VALUES (?, ?, ?, ?)",
+        ("hash1", str(tmp_path / "video1.mp4"), "in_progress", 0),
+    )
+    conn.commit()
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/videos/manual/next?exclude=hash1", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/videos/manual" in resp.headers["Location"]
+        assert "hash1" not in resp.headers["Location"]
+
+
 # --- Tests for rename_person route ---
 
 
