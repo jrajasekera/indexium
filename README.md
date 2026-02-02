@@ -158,7 +158,7 @@ environment variables with sensible defaults:
 - `MANUAL_VIDEO_REVIEW_ENABLED`: toggle the manual video tagging workflow (default: `true`)
 - `MANUAL_REVIEW_WARMUP_ENABLED`: enable background warmup for upcoming manual-review videos (default: `true`)
 - `MANUAL_REVIEW_WARMUP_WORKERS`: number of warmup threads (default: 4)
-- `MANUAL_REVIEW_WARMUP_DEPTH`: how many upcoming videos to prewarm (default: 2)
+- `MANUAL_REVIEW_WARMUP_DEPTH`: how many upcoming videos to prewarm (default: 10)
 - `INDEXIUM_OCR_ENABLED`: toggle OCR extraction during scanning (default: `true` when EasyOCR is installed)
 - `INDEXIUM_OCR_ENGINE`: choose `easyocr`, `tesseract`, or `auto` (default; tries EasyOCR then falls back to Tesseract)
 - `INDEXIUM_OCR_LANGS`: comma-separated EasyOCR language codes (default: `en`)

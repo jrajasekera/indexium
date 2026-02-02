@@ -87,7 +87,7 @@ class Config:
         os.environ.get("MANUAL_REVIEW_WARMUP_ENABLED", "true")
     )
     MANUAL_REVIEW_WARMUP_WORKERS: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_WORKERS", "4"))
-    MANUAL_REVIEW_WARMUP_DEPTH: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_DEPTH", "2"))
+    MANUAL_REVIEW_WARMUP_DEPTH: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_DEPTH", "10"))
     MANUAL_KNOWN_PEOPLE_CACHE_SECONDS: float = float(
         os.environ.get("MANUAL_KNOWN_PEOPLE_CACHE_SECONDS", "30")
     )
