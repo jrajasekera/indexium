@@ -40,6 +40,7 @@ class Config:
         MANUAL_NAME_SUGGEST_THRESHOLD: Minimum fuzzy-match score to auto-suggest a name.
         MANUAL_REVIEW_WARMUP_ENABLED: Enables background warmup of the next manual-review video.
         MANUAL_REVIEW_WARMUP_WORKERS: Size of the thread pool used for warmup jobs.
+        MANUAL_REVIEW_WARMUP_DEPTH: Number of upcoming manual-review videos to prewarm.
         MANUAL_KNOWN_PEOPLE_CACHE_SECONDS: TTL for caching the list of known people names.
         OCR_ENABLED: Enables OCR extraction during scanning when true.
         OCR_ENGINE: Preferred OCR engine identifier.
@@ -86,6 +87,7 @@ class Config:
         os.environ.get("MANUAL_REVIEW_WARMUP_ENABLED", "true")
     )
     MANUAL_REVIEW_WARMUP_WORKERS: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_WORKERS", "4"))
+    MANUAL_REVIEW_WARMUP_DEPTH: int = int(os.environ.get("MANUAL_REVIEW_WARMUP_DEPTH", "2"))
     MANUAL_KNOWN_PEOPLE_CACHE_SECONDS: float = float(
         os.environ.get("MANUAL_KNOWN_PEOPLE_CACHE_SECONDS", "30")
     )

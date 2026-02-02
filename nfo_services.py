@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lxml import etree
+from lxml import etree  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

@@ -172,6 +172,14 @@ def _schedule_manual_video_warmup(next_hash: str | None) -> None:
     _manual_warmup_executor.submit(_enqueue)
 
 
+def _schedule_manual_video_warmup_batch(next_hashes: list[str] | tuple[str, ...] | None) -> None:
+    """Queue warmup jobs for multiple upcoming manual-review videos."""
+    if not next_hashes:
+        return
+    for next_hash in next_hashes:
+        _schedule_manual_video_warmup(next_hash)
+
+
 def _manual_feature_guard() -> None:
     """Abort with 404 if manual video review is disabled."""
     if not config.MANUAL_VIDEO_REVIEW_ENABLED:
@@ -434,8 +442,12 @@ def _get_manual_video_record(conn: sqlite3.Connection, file_hash: str) -> sqlite
     return row
 
 
-def _get_next_manual_video(conn: sqlite3.Connection, exclude_hash: str | None = None) -> str | None:
-    """Return the next manual-review video hash, optionally skipping current."""
+def _get_next_manual_video_hashes(
+    conn: sqlite3.Connection, exclude_hash: str | None = None, limit: int = 1
+) -> list[str]:
+    """Return the next manual-review video hashes, optionally skipping current."""
+    if limit <= 0:
+        return []
     query = [
         """
         SELECT file_hash
@@ -443,7 +455,7 @@ def _get_next_manual_video(conn: sqlite3.Connection, exclude_hash: str | None = 
         WHERE manual_review_status IN ('pending', 'in_progress')
         """
     ]
-    params: list[str] = []
+    params: list[Any] = []
     if exclude_hash:
         query.append("AND file_hash != ?")
         params.append(exclude_hash)
@@ -452,9 +464,16 @@ def _get_next_manual_video(conn: sqlite3.Connection, exclude_hash: str | None = 
         "         COALESCE(last_attempt, CURRENT_TIMESTAMP) ASC,"
         "         file_hash ASC"
     )
-    query.append("LIMIT 1")
-    row = conn.execute("\n".join(query), params).fetchone()
-    return row["file_hash"] if row else None
+    query.append("LIMIT ?")
+    params.append(int(limit))
+    rows = conn.execute("\n".join(query), params).fetchall()
+    return [row["file_hash"] for row in rows]
+
+
+def _get_next_manual_video(conn: sqlite3.Connection, exclude_hash: str | None = None) -> str | None:
+    """Return the next manual-review video hash, optionally skipping current."""
+    hashes = _get_next_manual_video_hashes(conn, exclude_hash=exclude_hash, limit=1)
+    return hashes[0] if hashes else None
 
 
 def _serialize_plan_item(item: NfoPlanItem) -> dict[str, Any]:
@@ -592,14 +611,22 @@ def api_edit_metadata_plan_item(file_hash):
     result_people = payload.get("result_people", [])
     if isinstance(result_people, str):
         result_people = [result_people]
-    if not isinstance(result_people, list | tuple):
+    if isinstance(result_people, tuple):
+        result_people = list(result_people)
+    if not isinstance(result_people, list):
         abort(400, description="result_people must be a list of names")
+
+    normalized_people: list[str] = []
+    for name in result_people:
+        if not isinstance(name, str):
+            abort(400, description="result_people must be a list of names")
+        normalized_people.append(name)
 
     items = nfo_planner.build_plan([file_hash])
     if not items:
         abort(404, description="Plan item not found")
 
-    updated_item = nfo_planner.update_item_with_custom_people(items[0], result_people)
+    updated_item = nfo_planner.update_item_with_custom_people(items[0], normalized_people)
     return jsonify({"item": updated_item.to_dict()})
 
 
@@ -1267,8 +1294,12 @@ def manual_video_detail(file_hash):
         excluded_names=set(tags),
     )
 
-    next_manual_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
-    _schedule_manual_video_warmup(next_manual_hash)
+    warmup_depth = max(int(config.MANUAL_REVIEW_WARMUP_DEPTH or 0), 0)
+    if warmup_depth > 0:
+        next_manual_hashes = _get_next_manual_video_hashes(
+            conn, exclude_hash=file_hash, limit=warmup_depth
+        )
+        _schedule_manual_video_warmup_batch(next_manual_hashes)
 
     if suggestion_name:
         app.logger.info(
@@ -1342,6 +1373,8 @@ def manual_video_add_tags(file_hash):
 
     mark_done_redirect: str | None = None
     next_manual_hash: str | None = None
+    next_manual_hashes: list[str] = []
+    warmup_depth = max(int(config.MANUAL_REVIEW_WARMUP_DEPTH or 0), 0)
     mark_done_requested = submit_action == "add_and_done"
 
     if mark_done_requested and not invalid:
@@ -1361,7 +1394,10 @@ def manual_video_add_tags(file_hash):
             should_commit = True
             flash("Marked video as manually tagged.", "success")
 
-            next_manual_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
+            next_manual_hashes = _get_next_manual_video_hashes(
+                conn, exclude_hash=file_hash, limit=max(warmup_depth, 1)
+            )
+            next_manual_hash = next_manual_hashes[0] if next_manual_hashes else None
             if next_manual_hash:
                 redirect_args = {"file_hash": next_manual_hash}
                 if focus_person:
@@ -1375,8 +1411,8 @@ def manual_video_add_tags(file_hash):
         conn.commit()
     if added:
         _invalidate_known_people_cache()
-    if next_manual_hash:
-        _schedule_manual_video_warmup(next_manual_hash)
+    if warmup_depth > 0 and next_manual_hashes:
+        _schedule_manual_video_warmup_batch(next_manual_hashes)
 
     if mark_done_redirect:
         return redirect(mark_done_redirect)
@@ -1461,10 +1497,14 @@ def manual_video_update_status(file_hash):
 
     focus_person = request.form.get("focus_person", "").strip()
 
-    next_hash = _get_next_manual_video(conn, exclude_hash=file_hash)
-    if next_hash:
-        _schedule_manual_video_warmup(next_hash)
-        redirect_args = {"file_hash": next_hash}
+    warmup_depth = max(int(config.MANUAL_REVIEW_WARMUP_DEPTH or 0), 0)
+    next_hashes = _get_next_manual_video_hashes(
+        conn, exclude_hash=file_hash, limit=max(warmup_depth, 1)
+    )
+    if next_hashes:
+        if warmup_depth > 0:
+            _schedule_manual_video_warmup_batch(next_hashes)
+        redirect_args = {"file_hash": next_hashes[0]}
         if focus_person:
             redirect_args["focus_person"] = focus_person
         return redirect(url_for("manual_video_detail", **redirect_args))  # type: ignore[arg-type]

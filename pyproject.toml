@@ -72,6 +72,7 @@ exclude = [
     "thumbnails",
     "test_vids",
     ".venv",
+    ".worktrees",
 ]
 
 [tool.coverage.run]
