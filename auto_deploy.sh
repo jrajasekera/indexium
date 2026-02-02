@@ -158,7 +158,13 @@ cleanup_old_backups() {
     local deleted_count=0
     while IFS= read -r -d '' backup_file; do
         local file_mtime
-        file_mtime=$(stat -f %m "$backup_file" 2>/dev/null || stat -c %Y "$backup_file" 2>/dev/null)
+        # Linux uses -c %Y, macOS uses -f %m (try Linux first to avoid GNU stat output on Linux)
+        file_mtime=$(stat -c %Y "$backup_file" 2>/dev/null || stat -f %m "$backup_file" 2>/dev/null || echo "")
+
+        if [[ ! "$file_mtime" =~ ^[0-9]+$ ]]; then
+            log_warn "Invalid mtime for $(basename "$backup_file"); skipping"
+            continue
+        fi
 
         if [[ $file_mtime -lt $cutoff_time ]]; then
             rm -f "$backup_file"
