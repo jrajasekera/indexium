@@ -6,10 +6,9 @@ Defaults to setting all videos to pending so they appear in the manual review UI
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 from collections.abc import Iterable
-
-from config import Config
 
 VALID_STATUSES = {"pending", "in_progress", "done", "no_people", "not_required"}
 VALID_SCOPES = {"all", "not_required"}
@@ -67,7 +66,7 @@ def main() -> None:
     if scope not in VALID_SCOPES:
         raise SystemExit(f"Invalid --scope '{scope}'. Valid: {', '.join(sorted(VALID_SCOPES))}.")
 
-    db_path = args.db or Config().DATABASE_FILE
+    db_path = args.db or os.environ.get("INDEXIUM_DB", "video_faces.db")
 
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
