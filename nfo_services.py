@@ -149,6 +149,53 @@ class NfoService:
 
         self._write_xml(nfo_path, root, encoding)
 
+    def migrate_actor_sources(
+        self,
+        nfo_path: str,
+        indexium_actors: list[str],
+    ) -> tuple[int, int]:
+        """Convert matching non-indexium actors to source='indexium'.
+
+        Returns (updated_count, removed_duplicates).
+        """
+        if not indexium_actors:
+            return (0, 0)
+
+        root, encoding = self._read_xml(nfo_path)
+        target_names = {name.strip().lower() for name in indexium_actors if name.strip()}
+        if not target_names:
+            return (0, 0)
+
+        updated_count = 0
+        for actor_elem in root.findall("actor"):
+            name_elem = actor_elem.find("name")
+            if name_elem is None or not name_elem.text:
+                continue
+            name_key = name_elem.text.strip().lower()
+            if name_key in target_names and actor_elem.get("source") != "indexium":
+                actor_elem.set("source", "indexium")
+                updated_count += 1
+
+        removed_duplicates = 0
+        seen: set[tuple[str, str]] = set()
+        for actor_elem in list(root.findall("actor")):
+            name_elem = actor_elem.find("name")
+            if name_elem is None or not name_elem.text:
+                continue
+            name_key = name_elem.text.strip().lower()
+            source_key = actor_elem.get("source") or ""
+            key = (name_key, source_key)
+            if key in seen:
+                root.remove(actor_elem)
+                removed_duplicates += 1
+            else:
+                seen.add(key)
+
+        if updated_count or removed_duplicates:
+            self._write_xml(nfo_path, root, encoding)
+
+        return (updated_count, removed_duplicates)
+
     def _write_xml(self, nfo_path: str, root: etree._Element, encoding: str | None) -> None:
         """Write NFO file, preserving original encoding."""
         # Handle utf-8-sig specially (lxml doesn't understand this encoding name)
@@ -369,6 +416,21 @@ class NfoPlanner:
             tags_to_remove=tags_to_remove,
         )
 
+        issues: list[str] = []
+        issue_codes: list[str] = []
+        if probe_error:
+            issues.append("NFO parse error")
+            issue_codes.append("nfo_parse_error")
+        if nfo_path is None:
+            issues.append("No NFO file found")
+            issue_codes.append("missing_nfo")
+        if risk_level == "danger":
+            issues.append("Non-indexium actors match DB people; would duplicate actors")
+            issue_codes.append("non_indexium_conflict")
+        if tags_to_remove:
+            issues.append("Removing actors from NFO")
+            issue_codes.append("tag_removal")
+
         # Build comment strings for UI compatibility
         existing_comment = ", ".join(sorted(existing_indexium_actors, key=str.lower)) or None
         result_comment = ", ".join(result_people)
@@ -393,6 +455,8 @@ class NfoPlanner:
             result_comment=result_comment,
             risk_level=risk_level,
             can_update=can_update,
+            issues=issues,
+            issue_codes=issue_codes,
             probe_error=probe_error,
             metadata_only_people=metadata_only_people,
             will_overwrite_comment=bool(existing_indexium_actors and tags_to_remove),
