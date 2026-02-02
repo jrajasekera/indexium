@@ -24,44 +24,8 @@
     </div>
 
     <div class="grid gap-6 lg:grid-cols-[minmax(0,2fr)_1fr]">
-        <div class="space-y-6 order-2 lg:order-none">
-            <div class="card bg-base-100 shadow-lg">
-                <div class="card-body">
-                    <div class="flex items-center justify-between">
-                        <h2 class="card-title">Sample Frames</h2>
-                        <form action="{{ url_for('manual_video_reshuffle', file_hash=video.file_hash) }}" method="post">
-                            {% if focus_person %}
-                            <input type="hidden" name="focus_person" value="{{ focus_person }}">
-                            {% endif %}
-                            <button type="submit" class="btn btn-sm btn-outline">Reshuffle</button>
-                        </form>
-                    </div>
-                    {% if sample_images %}
-                    <div class="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4" id="manual-sample-grid">
-                        {% for image in sample_images %}
-                        <button type="button"
-                                class="overflow-hidden rounded-xl border border-base-300 focus:outline-none focus:ring-2 focus:ring-primary"
-                                data-frame-index="{{ loop.index0 }}"
-                                data-frame-url="{{ image.url }}"
-                                data-frame-label="Sample frame {{ loop.index }}">
-                            <img src="{{ image.url }}" alt="Sample frame {{ loop.index }}" class="object-cover w-full h-full" loading="lazy">
-                        </button>
-                        {% endfor %}
-                    </div>
-                    {% elif video.missing %}
-                    <div class="alert bg-base-200 mt-4">
-                        <span>Unable to generate frames because the source video is missing.</span>
-                    </div>
-                    {% else %}
-                    <div class="alert bg-base-200 mt-4">
-                        <span>No frames available. Try reshuffling to generate a new set.</span>
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <div class="space-y-6 order-1 lg:order-none">
+        <!-- 1. Tagged People - first in DOM for mobile, right column on desktop -->
+        <div class="lg:col-start-2 lg:row-start-1">
             <div class="card bg-base-100 shadow-lg">
                 <div class="card-body space-y-4">
                     <h2 class="card-title">Tagged People</h2>
@@ -126,7 +90,48 @@
                     </form>
                 </div>
             </div>
+        </div>
 
+        <!-- 2. Sample Frames - second in DOM for mobile, left column spanning all rows on desktop -->
+        <div class="lg:col-start-1 lg:row-start-1 lg:row-end-[-1]">
+            <div class="card bg-base-100 shadow-lg">
+                <div class="card-body">
+                    <div class="flex items-center justify-between">
+                        <h2 class="card-title">Sample Frames</h2>
+                        <form action="{{ url_for('manual_video_reshuffle', file_hash=video.file_hash) }}" method="post">
+                            {% if focus_person %}
+                            <input type="hidden" name="focus_person" value="{{ focus_person }}">
+                            {% endif %}
+                            <button type="submit" class="btn btn-sm btn-outline">Reshuffle</button>
+                        </form>
+                    </div>
+                    {% if sample_images %}
+                    <div class="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4" id="manual-sample-grid">
+                        {% for image in sample_images %}
+                        <button type="button"
+                                class="overflow-hidden rounded-xl border border-base-300 focus:outline-none focus:ring-2 focus:ring-primary"
+                                data-frame-index="{{ loop.index0 }}"
+                                data-frame-url="{{ image.url }}"
+                                data-frame-label="Sample frame {{ loop.index }}">
+                            <img src="{{ image.url }}" alt="Sample frame {{ loop.index }}" class="object-cover w-full h-full" loading="lazy">
+                        </button>
+                        {% endfor %}
+                    </div>
+                    {% elif video.missing %}
+                    <div class="alert bg-base-200 mt-4">
+                        <span>Unable to generate frames because the source video is missing.</span>
+                    </div>
+                    {% else %}
+                    <div class="alert bg-base-200 mt-4">
+                        <span>No frames available. Try reshuffling to generate a new set.</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Review Actions - third in DOM for mobile, right column on desktop -->
+        <div class="lg:col-start-2">
             <div class="card bg-base-100 shadow-lg">
                 <div class="card-body space-y-3">
                     <h2 class="card-title">Review Actions</h2>
@@ -147,8 +152,11 @@
                     </form>
                 </div>
             </div>
+        </div>
 
-            {% if video_text_entries %}
+        <!-- 4. Extracted Text (conditional) - fourth in DOM for mobile, right column on desktop -->
+        {% if video_text_entries %}
+        <div class="lg:col-start-2">
             <div class="card bg-base-100 shadow-lg">
                 <div class="card-body space-y-4">
                     <div class="flex items-center justify-between">
@@ -200,8 +208,8 @@
                     </details>
                 </div>
             </div>
-            {% endif %}
         </div>
+        {% endif %}
     </div>
 </div>
 
