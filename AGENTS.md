@@ -1,14 +1,16 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `app.py`: Flask web UI for tagging, reviewing, metadata writing, and manual video review workflow.
+- `app.py`: Flask web UI for tagging, manual video review, and NFO metadata plan/write/history workflows.
 - `scanner.py`: Video scanning, face detection/encoding, clustering, OCR extraction, auto-classify. CLI entry point for scanner commands.
-- `metadata_services.py`: Metadata planning/writing system with `MetadataPlanner`, `MetadataWriter`, `BackupManager`, and `HistoryService` classes.
+- `nfo_services.py`: Active NFO metadata engine with `NfoPlanner`, `NfoWriter`, `NfoHistoryService`, and backup/parse services.
+- `metadata_services.py`: Legacy ffmpeg-comment metadata services (`MetadataPlanner`, `MetadataWriter`, etc.) retained for compatibility/tests.
 - `config.py`: Env-driven settings (paths, thresholds, cores, OCR config). Centralize changes here.
 - `text_utils.py`: OCR text fragment ranking/filtering via `calculate_top_text_fragments()`.
 - `util.py`: File hashing for content-based video tracking.
 - `signal_handler.py`: `SignalHandler` class for graceful shutdown on Ctrl+C.
 - `e2e_test.py`: End-to-end pipeline test runner.
+- `scripts/`: Maintenance utilities (config checks, DB stats, NFO actor migration, manual review status updates).
 - `tests/`: Pytest suite with `conftest.py` fixtures and test modules for each component.
 - `templates/`: Jinja2 templates for the UI (tagging, manual review, metadata preview/history).
 - `thumbnails/`, `video_faces.db`: Generated at runtime (gitignored).
@@ -23,11 +25,14 @@
 ### Scanner Commands
 ```bash
 python scanner.py                        # Full scan
+python scanner.py retry                  # Reprocess previously failed videos
+python scanner.py cleanup                # Remove orphaned/failed thumbnails
 python scanner.py refresh_ocr            # Refresh OCR for all completed videos
-python scanner.py refresh_ocr HASH123    # Refresh specific file hash
+python scanner.py refresh_ocr HASH1 ...  # Refresh one or more specific file hashes
 python scanner.py continue_ocr           # Process videos missing OCR
 python scanner.py cleanup_ocr            # Remove short OCR text (default <4 chars)
 python scanner.py cleanup_ocr 6          # Custom minimum length
+python scanner.py ocr_diagnose           # Print OCR environment diagnostics
 ```
 
 ## Coding Style & Naming Conventions
@@ -41,7 +46,7 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 - Use fixtures/monkeypatching to point DB/paths to temp locations (see `tests/conftest.py`).
 - Run locally with `pytest -q`; target specific tests during development for speed.
 - Coverage: `pytest --cov --cov-report=term-missing` • HTML report: `pytest --cov --cov-report=html`
-- Test files: `test_app.py`, `test_scanner.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_config.py`, `test_util.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`.
+- Test files: `test_app.py`, `test_scanner.py`, `test_nfo_services.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_config.py`, `test_text_utils.py`, `test_util.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`.
 
 ## Commit & Pull Request Guidelines
 - Commit messages: imperative mood, concise summary (e.g., "Add pagination for tag_group"). Optional scope tags (e.g., `test:`) are welcome.
@@ -52,7 +57,7 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 - Do not commit generated assets: `video_faces.db`, `thumbnails/`, `.env` (already in `.gitignore`).
 - Required tools: ffmpeg (includes ffprobe), OpenCV/dlib system deps (see README).
 - For OCR: EasyOCR (preferred) or Tesseract as fallback.
-- Key env vars: `INDEXIUM_VIDEO_DIR`, `INDEXIUM_DB`, `FLASK_DEBUG`, `INDEXIUM_OCR_ENABLED`, `INDEXIUM_OCR_ENGINE`.
+- Key env vars: `INDEXIUM_VIDEO_DIR`, `INDEXIUM_DB`, `FLASK_DEBUG`, `INDEXIUM_OCR_ENABLED`, `INDEXIUM_OCR_ENGINE`, `MANUAL_VIDEO_REVIEW_ENABLED`, `METADATA_PLAN_WORKERS`, `NFO_REMOVE_STALE_ACTORS`, `NFO_BACKUP_MAX_AGE_DAYS`.
 
 ## Manual UI Testing with Playwright
 

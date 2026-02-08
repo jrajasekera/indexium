@@ -28,11 +28,14 @@ pytest --cov --cov-report=html          # Generate HTML report in htmlcov/
 ### Scanner Commands
 ```bash
 python scanner.py                        # Full scan
+python scanner.py retry                  # Retry processing of failed videos
+python scanner.py cleanup                # Clean up orphaned thumbnail files
 python scanner.py refresh_ocr            # Refresh OCR for all completed videos
 python scanner.py refresh_ocr HASH123    # Refresh specific file hash
 python scanner.py continue_ocr           # Process videos missing OCR
 python scanner.py cleanup_ocr            # Remove short OCR text (default <4 chars)
 python scanner.py cleanup_ocr 6          # Custom minimum length
+python scanner.py ocr_diagnose           # Diagnose OCR environment setup
 ```
 
 ## Architecture
@@ -49,7 +52,16 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
   - `BackupManager`: Creates/restores file backups before metadata writes
   - `HistoryService`: Tracks operation history for rollback capability
 
+- **nfo_services.py**: NFO metadata file management for Jellyfin integration with these key classes:
+  - `NfoService`: Reads/writes actor lists in NFO XML files, preserving non-indexium actors
+  - `NfoPlanner`: Builds change plans comparing DB people vs existing NFO actors, with risk levels (safe/warning/danger/blocked)
+  - `NfoWriter`: Asynchronous background writer with pause/resume/cancel support
+  - `NfoBackupManager`: Operation-scoped NFO file backup/restore
+  - `NfoHistoryService`: Query and rollback NFO operations
+
 - **config.py**: Centralized configuration via `Config` dataclass. All settings loaded from environment variables with defaults. Always modify settings here, not inline.
+
+- **type_defs.py**: Centralized type definitions using `TypedDict` and numpy aliases. Covers DB row types, API response types, face/OCR data structures, cache structures, and processing types.
 
 - **text_utils.py**: OCR text fragment ranking/filtering via `calculate_top_text_fragments()`.
 
@@ -62,10 +74,15 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 ### Database Schema (SQLite)
 
 - `scanned_files`: Tracks processed videos by content hash, stores face counts, manual review status, sampling seeds, OCR text counts
-- `faces`: Face data with locations, 128-dim encodings, cluster IDs, and person tags
+- `faces`: Face data with locations, 128-dim encodings, cluster IDs, and person tags (includes auto-suggestion columns)
 - `video_people`: Links videos-without-faces to manually assigned person tags
 - `video_text`: OCR text snippets keyed by video hash (raw_text, normalized_text, confidence, timestamps)
 - `video_text_fragments`: Top-ranked OCR text fragments per video for UI display
+- `metadata_operations`: Tracks metadata write operations (status, counts, timestamps)
+- `metadata_operation_items`: Individual file items within a metadata operation (per-file status, old/new comments, NFO path)
+- `metadata_history`: Backup of original metadata before writes for rollback
+- `metadata_comment_cache`: Caches video file comments keyed by file hash with mtime tracking
+- `nfo_actor_cache`: Caches parsed NFO file actor data keyed by NFO path with mtime tracking
 
 ### Processing Pipeline
 
@@ -75,6 +92,7 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 4. Web UI presents clusters for manual naming
 5. Manual video review workflow for videos without detected faces
 6. Metadata writer embeds "People: Name1, Name2" into video file comments via ffmpeg
+7. NFO writer updates Jellyfin-compatible NFO files with actor metadata
 
 ### Key Patterns
 
@@ -82,7 +100,8 @@ python scanner.py cleanup_ocr 6          # Custom minimum length
 - **Graceful shutdown**: `SignalHandler` class catches Ctrl+C and saves progress
 - **OCR fallback**: EasyOCR preferred (via subprocess worker), falls back to Tesseract if unavailable
 - **Caching**: Known people cache in app.py with TTL, invalidated on tag changes
-- **Background warmup**: Pre-generates sample frames for next manual review video
+- **Background warmup**: Pre-generates sample frames for next manual review videos (configurable depth and worker count)
+- **NFO integration**: Reads/writes Jellyfin NFO XML files, preserving non-indexium actors, with risk-based planning and rollback
 
 ## Configuration
 
@@ -107,6 +126,8 @@ Key environment variables (see `config.py` for full list):
 - `NO_FACE_SAMPLE_DIR`: Sample frame storage (default: `thumbnails/no_faces`)
 - `MANUAL_NAME_SUGGEST_THRESHOLD`: Fuzzy match threshold (default: 0.82)
 - `MANUAL_REVIEW_WARMUP_ENABLED`: Background warmup (default: true)
+- `MANUAL_REVIEW_WARMUP_WORKERS`: Thread pool size for warmup jobs (default: 4)
+- `MANUAL_REVIEW_WARMUP_DEPTH`: Number of upcoming videos to prewarm (default: 10)
 - `MANUAL_KNOWN_PEOPLE_CACHE_SECONDS`: Cache TTL (default: 30)
 
 ### OCR Settings
@@ -121,6 +142,10 @@ Key environment variables (see `config.py` for full list):
 - `INDEXIUM_OCR_MAX_RESULTS`: Max OCR entries per video (default: 200)
 - `INDEXIUM_OCR_TOP_FRAGMENTS`: Top fragments to save (default: 10)
 
+### NFO Settings
+- `NFO_REMOVE_STALE_ACTORS`: Remove stale actors from NFO files (default: true)
+- `NFO_BACKUP_MAX_AGE_DAYS`: Max age for NFO backup files (default: 30)
+
 ### Flask/Metadata
 - `SECRET_KEY`: Flask secret key
 - `FLASK_DEBUG`: Debug mode (default: false)
@@ -131,7 +156,7 @@ Key environment variables (see `config.py` for full list):
 - Tests use monkeypatching to redirect DB/paths to temp locations
 - Check `tests/conftest.py` for shared fixtures
 - E2E test (`e2e_test.py`) runs full pipeline with isolated temp directory
-- Test files: `test_app.py`, `test_scanner.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_config.py`, `test_util.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`
+- Test files: `test_app.py`, `test_scanner.py`, `test_metadata_services.py`, `test_metadata_writer.py`, `test_nfo_services.py`, `test_config.py`, `test_util.py`, `test_text_utils.py`, `test_signal_handler.py`, `test_e2e.py`, `test_e2e_ui.py`
 
 ## Manual UI Testing with Playwright
 
