@@ -147,14 +147,6 @@ class TextFragment(TypedDict):
     total_length: int
 
 
-class SubstringInfo(TypedDict):
-    """Internal tracking for substring analysis in text_utils."""
-
-    text: str
-    count: int
-    total_length: int
-
-
 # =============================================================================
 # Sample/Thumbnail types
 # =============================================================================

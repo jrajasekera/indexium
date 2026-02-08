@@ -119,6 +119,14 @@ class NfoService:
             if root is None:
                 raise NfoParseError(nfo_path, "XML recovery failed")
 
+            if parser.error_log:
+                errors = [str(e) for e in parser.error_log.filter_from_errors()]
+                if errors:
+                    raise NfoParseError(
+                        nfo_path,
+                        f"XML has errors (recovered): {errors[0]}",
+                    )
+
             return root, encoding
 
         except etree.XMLSyntaxError as e:
@@ -131,10 +139,16 @@ class NfoService:
     ) -> None:
         """Update NFO: keep non-indexium actors, replace indexium actors.
 
+        If the NFO file does not exist, a new one is created with a <movie> root.
+
         Raises:
-            NfoParseError: If XML is malformed
+            NfoParseError: If existing XML is malformed
         """
-        root, encoding = self._read_xml(nfo_path)
+        if os.path.exists(nfo_path):
+            root, encoding = self._read_xml(nfo_path)
+        else:
+            root = etree.Element("movie")
+            encoding = None
 
         # Remove existing indexium actors
         for actor_elem in root.findall("actor"):
@@ -234,8 +248,13 @@ class NfoBackupManager:
         """Return expected backup path for given NFO and operation."""
         return f"{nfo_path}.bak.{operation_id}"
 
-    def create_backup(self, nfo_path: str, operation_id: int) -> str:
-        """Copy NFO to operation-scoped backup, return backup path."""
+    def create_backup(self, nfo_path: str, operation_id: int) -> str | None:
+        """Copy NFO to operation-scoped backup, return backup path.
+
+        Returns None if the source file does not exist (new NFO creation).
+        """
+        if not Path(nfo_path).exists():
+            return None
         backup_path = self.find_backup_path(nfo_path, operation_id)
         shutil.copy2(nfo_path, backup_path)
         return backup_path
@@ -314,6 +333,7 @@ class NfoPlanItem:
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON API response."""
         data = asdict(self)
+        data["has_changes"] = self.has_changes
         data["requires_update"] = self.requires_update
         # Remove internal fields not needed by UI
         data.pop("other_actors", None)
@@ -321,11 +341,16 @@ class NfoPlanItem:
         return data
 
     @property
+    def has_changes(self) -> bool:
+        """True if tags differ from current state, regardless of can_update."""
+        return bool(self.tags_to_add or self.tags_to_remove)
+
+    @property
     def requires_update(self) -> bool:
         """True if this item needs to be written."""
         if not self.can_update:
             return False
-        return bool(self.tags_to_add or self.tags_to_remove)
+        return self.has_changes
 
 
 class NfoPlanner:
@@ -718,6 +743,7 @@ class NfoWriter:
         self.backup_manager = NfoBackupManager()
         self._lock = threading.Lock()
         self._operations: dict[int, _NfoWriterRuntime] = {}
+        self._writing_files: set[str] = set()
 
     def start_operation(
         self,
@@ -978,15 +1004,30 @@ class NfoWriter:
 
         # Coordinate writes to shared NFO files
         # Only create backup and write if we haven't already written this NFO
+        resolved_path = os.path.realpath(item.nfo_path)
         if item.nfo_path in runtime.written_nfos:
             logger.debug("Skipping already-written NFO: %s", item.nfo_path)
             return
 
-        if backup:
-            self.backup_manager.create_backup(item.nfo_path, operation_id)
+        # Cross-operation guard: skip if another operation is writing this file
+        with self._lock:
+            if resolved_path in self._writing_files:
+                logger.warning(
+                    "NFO file is being written by another operation, skipping: %s",
+                    item.nfo_path,
+                )
+                raise ValueError(f"NFO file contention: {item.nfo_path}")
+            self._writing_files.add(resolved_path)
 
-        self.nfo_service.write_actors(item.nfo_path, item.result_people)
-        runtime.written_nfos.add(item.nfo_path)
+        try:
+            if backup:
+                self.backup_manager.create_backup(item.nfo_path, operation_id)
+
+            self.nfo_service.write_actors(item.nfo_path, item.result_people)
+            runtime.written_nfos.add(item.nfo_path)
+        finally:
+            with self._lock:
+                self._writing_files.discard(resolved_path)
 
     def _update_operation_status(self, operation_id: int, status: str) -> None:
         """Update operation status in database."""
@@ -1140,6 +1181,14 @@ class NfoHistoryService:
                     self.backup_manager.cleanup_backup(nfo_path, operation_id)
                     restored += 1
                     restored_nfos.add(nfo_path)
+                elif Path(nfo_path).exists():
+                    # No backup means the file was newly created; delete to restore original state
+                    try:
+                        os.remove(nfo_path)
+                        restored += 1
+                        restored_nfos.add(nfo_path)
+                    except OSError:
+                        failed += 1
                 else:
                     failed += 1
 

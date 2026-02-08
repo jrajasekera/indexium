@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import math
 import os
@@ -53,6 +54,7 @@ _manual_warmup_lock = threading.Lock()
 if config.MANUAL_VIDEO_REVIEW_ENABLED and config.MANUAL_REVIEW_WARMUP_ENABLED:
     worker_count = max(int(config.MANUAL_REVIEW_WARMUP_WORKERS or 1), 1)
     _manual_warmup_executor = ThreadPoolExecutor(max_workers=worker_count)
+    atexit.register(lambda: _manual_warmup_executor.shutdown(wait=False))
 
 _known_people_cache_lock = threading.Lock()
 _known_people_cache: dict[str, Any] = {
@@ -130,7 +132,9 @@ def _load_known_people_cache(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
     with _known_people_cache_lock:
-        _known_people_cache.update(refreshed)
+        # Only update if cache hasn't been refreshed by another thread since we started
+        if float(_known_people_cache["timestamp"]) < now:
+            _known_people_cache.update(refreshed)
 
     return _known_people_cache
 
@@ -317,11 +321,7 @@ def _get_video_samples(
     existing_paths = sorted(sample_dir.glob("*.jpg"))
     sample_count = config.NO_FACE_SAMPLE_COUNT
 
-    if (
-        existing_paths
-        and not regenerate
-        and len(existing_paths) >= min(sample_count, len(existing_paths))
-    ):
+    if existing_paths and not regenerate and len(existing_paths) >= sample_count:
         return existing_paths[:sample_count], video_path
 
     seed = _ensure_sample_seed(conn, file_hash, regenerate or not existing_paths)
@@ -541,8 +541,8 @@ def api_get_metadata_plan():
     sort_dir = sort_payload.get("direction") or request.args.get("direction", "asc")
 
     all_items = nfo_planner.build_plan(file_hashes)
-    # Only show files that actually need updates (have a diff)
-    items = [item for item in all_items if item.requires_update]
+    # Show files with diffs, including blocked ones (can_update=False)
+    items = [item for item in all_items if item.has_changes]
     filtered_items = nfo_planner.filter_items(items, filters)
     sorted_items = nfo_planner.sort_items(filtered_items, sort_by=sort_by, direction=sort_dir)
     total_items = len(filtered_items)
@@ -1591,6 +1591,7 @@ def name_cluster():
             (person_name, cluster_id),
         )
         conn.commit()
+        _invalidate_known_people_cache()
         flash(f"Assigned name '{person_name}' to cluster #{cluster_id}", "success")
     return redirect(url_for("index"))
 
@@ -1626,6 +1627,7 @@ def mark_unknown():
     """)
 
     conn.commit()
+    _invalidate_known_people_cache()
 
     flash(f"Marked cluster #{cluster_id} as Unknown.", "success")
     return redirect(url_for("index"))
@@ -1691,6 +1693,7 @@ def accept_suggestion():
         (suggestion_name, cluster_id),
     )
     conn.commit()
+    _invalidate_known_people_cache()
     flash(f"Accepted suggestion '{suggestion_name}' for cluster #{cluster_id}.", "success")
     return redirect(url_for("index"))
 
@@ -1858,6 +1861,7 @@ def rename_person(old_name):
         return redirect(url_for("person_details", person_name=old_name))
     conn.execute("UPDATE faces SET person_name = ? WHERE person_name = ?", (new_name, old_name))
     conn.commit()
+    _invalidate_known_people_cache()
     flash(f"Renamed '{old_name}' to '{new_name}'.", "success")
     return redirect(url_for("person_details", person_name=new_name))
 
@@ -1868,6 +1872,7 @@ def unname_person():
     conn = get_db_connection()
     conn.execute("UPDATE faces SET person_name = NULL WHERE person_name = ?", (person_name,))
     conn.commit()
+    _invalidate_known_people_cache()
     flash(f"'{person_name}' has been un-named and their group is back in the queue.", "success")
     return redirect(url_for("list_people"))
 
@@ -1964,6 +1969,7 @@ def merge_clusters():
         (to_person_name, to_cluster_id),
     )
     conn.commit()
+    _invalidate_known_people_cache()
 
     flash(f"Successfully merged group #{from_cluster_id} into '{to_person_name}'.", "success")
     return redirect(url_for("index"))

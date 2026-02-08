@@ -229,8 +229,13 @@ def _start_easyocr_worker() -> bool:
         logger.error("EasyOCR worker failed to start: %s", payload)
         process.terminate()
         process.join(timeout=5)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=2)
         request_q.close()
+        request_q.join_thread()
         response_q.close()
+        response_q.join_thread()
         return False
 
     _easyocr_worker = (process, request_q, response_q)
@@ -247,10 +252,15 @@ def _stop_easyocr_worker():  # pragma: no cover - cleanup helper
     except Exception:
         pass
     request_q.close()
+    request_q.join_thread()
     response_q.close()
+    response_q.join_thread()
     if process.is_alive():
         process.terminate()
-    process.join(timeout=5)
+        process.join(timeout=5)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=2)
     _easyocr_worker = None
 
 
@@ -1572,6 +1582,7 @@ def write_data_to_db(
         logger.info("Save complete.")
     except Exception as e:
         logger.error(f"DATABASE ERROR during save: {e}")
+        raise
 
 
 def scan_videos_parallel(handler):
@@ -1721,20 +1732,23 @@ def scan_videos_parallel(handler):
 
                 # Save to DB when chunk size is reached
                 if len(pending_files_info) + len(pending_failed_info) >= SAVE_CHUNK_SIZE:
-                    write_data_to_db(
-                        pending_faces,
-                        pending_files_info,
-                        pending_failed_info,
-                        pending_ocr_entries,
-                        pending_ocr_fragments,
-                    )
-                    (
-                        pending_faces,
-                        pending_files_info,
-                        pending_failed_info,
-                        pending_ocr_entries,
-                        pending_ocr_fragments,
-                    ) = [], [], [], [], []
+                    try:
+                        write_data_to_db(
+                            pending_faces,
+                            pending_files_info,
+                            pending_failed_info,
+                            pending_ocr_entries,
+                            pending_ocr_fragments,
+                        )
+                        (
+                            pending_faces,
+                            pending_files_info,
+                            pending_failed_info,
+                            pending_ocr_entries,
+                            pending_ocr_fragments,
+                        ) = [], [], [], [], []
+                    except Exception:
+                        logger.warning("Chunk save failed, will retry in next save cycle")
         finally:
             pool.close()
             pool.join()
@@ -1995,17 +2009,28 @@ def cluster_faces():
 
         # Prepare updates for faces that belong to a cluster
         updates = []
+        noise_ids = []
         for idx, label in enumerate(clt.labels_):
             if label == -1:
-                continue  # leave noise faces unclustered
-            updates.append((label_to_cluster[label], face_ids[idx]))
+                noise_ids.append((face_ids[idx],))
+            else:
+                updates.append((label_to_cluster[label], face_ids[idx]))
 
         if updates:
             cursor.executemany("UPDATE faces SET cluster_id = ? WHERE id = ?", updates)
-            conn.commit()
             print(f"Updated {len(updates)} faces with new cluster IDs.")
         else:
             print("No new clusters were formed.")
+
+        if noise_ids:
+            cursor.executemany(
+                "UPDATE faces SET cluster_id = NULL WHERE id = ? AND cluster_id IS NOT NULL",
+                noise_ids,
+            )
+            print(f"Cleared stale cluster IDs from {len(noise_ids)} noise faces.")
+
+        if updates or noise_ids:
+            conn.commit()
 
     print("Face clustering complete.")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -15,6 +16,29 @@ if load_dotenv:
 def _str_to_bool(value: str) -> bool:
     """Parse truthy environment strings into booleans."""
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+_PROJECT_DIR = Path(__file__).resolve().parent
+
+
+def _get_or_create_secret_key() -> str:
+    """Return a stable Flask secret key, persisting to disk on first run."""
+    env_key = os.environ.get("SECRET_KEY", "").strip()
+    if env_key:
+        return env_key
+    key_file = _PROJECT_DIR / ".secret_key"
+    try:
+        stored = key_file.read_text().strip()
+        if stored:
+            return stored
+    except OSError:
+        pass
+    new_key = os.urandom(24).hex()
+    try:
+        key_file.write_text(new_key)
+    except OSError:
+        pass  # read-only filesystem; key is ephemeral this run
+    return new_key
 
 
 @dataclass
@@ -64,7 +88,7 @@ class Config:
 
     SAVE_CHUNK_SIZE: int = int(os.environ.get("SAVE_CHUNK_SIZE", "4"))
 
-    SECRET_KEY: str = os.environ.get("SECRET_KEY", os.urandom(24).hex())
+    SECRET_KEY: str = _get_or_create_secret_key()
     DEBUG: bool = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
 
     DBSCAN_EPS: float = float(os.environ.get("DBSCAN_EPS", "0.4"))

@@ -12,6 +12,7 @@ wheels/
 .env
 
 # Project files
+.secret_key
 video_faces.db
 thumbnails
 video_faces.db-journal

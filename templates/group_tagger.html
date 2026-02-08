@@ -402,7 +402,7 @@
 </div>
 <script>
     const primarySuggestionName = {{ primary_suggestion.name|tojson if primary_suggestion else 'null' }};
-    const existingNames = {{ existing_names|tojson|safe }};
+    const existingNames = {{ existing_names|tojson }};
     const nameInput = document.getElementById('person_name');
     const saveBtn = document.getElementById('save-name');
     const nameError = document.getElementById('name-error');
