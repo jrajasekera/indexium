@@ -9,8 +9,8 @@ A Python-based video face scanning and tagging application that automatically de
 - **Web-based Tagging Interface**: Clean, responsive web UI for reviewing and naming face groups
 - **Parallel Processing**: Multi-core video processing for faster scanning
 - **File Hash-based Tracking**: Tracks videos by content hash, handles moved/renamed files gracefully
-- **Metadata Writing**: Embeds person tags directly into video file metadata with backup and rollback support
-- **NFO/Jellyfin Integration**: Reads and writes Jellyfin-compatible NFO files with actor metadata, risk-based planning, and rollback
+- **Smart Metadata Planner**: Builds a risk-scored plan before writing metadata changes
+- **NFO/Jellyfin Integration**: Reads and writes Jellyfin-compatible NFO actor metadata with backup and rollback support
 - **On-Screen Text Capture**: Extracts unique OCR snippets from each video and surfaces them during tagging for quick copy/paste workflows
 - **Face Group Management**: Split groups, merge people, rename, and organize your tags
 - **Remove False Positives**: Delete mistaken face detections directly from the web UI
@@ -31,6 +31,7 @@ The application provides an intuitive web interface for:
 ### Prerequisites
 
 - Python 3.10 or higher
+- ffmpeg/ffprobe available on `PATH`
 - OpenCV dependencies (for video processing)
 - dlib dependencies (for face recognition)
 - EasyOCR requirements (PyTorch + torchvision); installed automatically via pip/uv, but ensure CUDA/cuDNN packages are available if you plan to use GPU OCR
@@ -58,14 +59,14 @@ pip install -e .
 On Ubuntu/Debian:
 ```bash
 sudo apt update
-sudo apt install cmake libopenblas-dev liblapack-dev libx11-dev libgtk-3-dev python3-dev
+sudo apt install cmake libopenblas-dev liblapack-dev libx11-dev libgtk-3-dev python3-dev ffmpeg
 # For OCR fallback
 sudo apt install tesseract-ocr
 ```
 
 On macOS:
 ```bash
-brew install cmake
+brew install cmake ffmpeg
 # For OCR fallback
 brew install tesseract
 ```
@@ -111,22 +112,18 @@ Then open your browser to `http://localhost:5001` to:
 
 Open `/videos/manual` in the web UI when a video has no detected faces. Indexium samples a grid of frames so you can tag anyone who appears or mark the clip as containing no recognizable people. Use the "Reshuffle" button for a new random set of frames, and mark videos as done (or no people) once reviewed.
 
-### 5. Write Metadata
+### 5. Write NFO Metadata
 
-Once you've tagged faces, write the tags to your video files:
-- Click "Write All Named Tags" in the web interface to preview a plan of changes
-- Tags are embedded in the video metadata as "People: Name1, Name2, ..." via ffmpeg
-- Original files are backed up before writing; full rollback is available from the metadata history page
-- The writer supports pause, resume, and cancel during long operations
+Once you've tagged people, use the Smart Metadata Planner (`/metadata_preview`) to apply NFO updates:
+- Review risk levels (`safe`/`warning`/`danger`/`blocked`) before writing
+- Click **Write Selected Metadata** to start an async write operation
+- Indexium updates `<actor source="indexium">` entries and preserves non-indexium actors
+- If no NFO exists yet, Indexium writes a new default `<video_name>.nfo` beside the video
+- The writer supports pause, resume, cancel, and rollback from metadata history
 
-### 6. Write NFO Metadata (Jellyfin)
+Note: the default web workflow writes NFO metadata (Jellyfin style), not ffmpeg comment tags inside video files.
 
-If your videos have companion `.nfo` files, Indexium can update them with actor metadata:
-- NFO planning compares DB tags against existing NFO actors with risk levels (safe/warning/danger/blocked)
-- Non-indexium actors in NFO files are preserved
-- Backup and rollback support for NFO operations
-
-### 7. Refresh OCR Text (optional)
+### 6. Refresh OCR Text (optional)
 
 If you tweak OCR settings or install new language packs, rebuild stored text snippets without touching face data:
 
@@ -150,7 +147,7 @@ To process only videos that are missing OCR text, use:
 python scanner.py continue_ocr
 ```
 
-### 8. Other Scanner Commands
+### 7. Other Scanner Commands
 
 ```bash
 python scanner.py retry          # Retry processing of previously failed videos
@@ -187,7 +184,7 @@ environment variables with sensible defaults:
 - `MANUAL_KNOWN_PEOPLE_CACHE_SECONDS`: cache TTL for known people list (default: 30)
 
 ### OCR Settings
-- `INDEXIUM_OCR_ENABLED`: toggle OCR extraction during scanning (default: `true` when EasyOCR is installed)
+- `INDEXIUM_OCR_ENABLED`: toggle OCR extraction during scanning (default: `true`)
 - `INDEXIUM_OCR_ENGINE`: choose `easyocr`, `tesseract`, or `auto` (default; tries EasyOCR then falls back to Tesseract)
 - `INDEXIUM_OCR_LANGS`: comma-separated EasyOCR language codes (default: `en`)
 - `INDEXIUM_OCR_USE_GPU`: enable GPU acceleration for OCR (default: `false`)
@@ -201,9 +198,9 @@ environment variables with sensible defaults:
 ### Metadata & NFO
 - `SECRET_KEY`: Flask secret key
 - `FLASK_DEBUG`: run the web UI in debug mode (default: `false`)
-- `METADATA_PLAN_WORKERS`: parallel workers for metadata planning (default: 8)
-- `NFO_REMOVE_STALE_ACTORS`: remove stale actors from NFO files (default: `true`)
-- `NFO_BACKUP_MAX_AGE_DAYS`: max age for NFO backup files (default: 30)
+- `METADATA_PLAN_WORKERS`: worker count for the legacy ffmpeg-comment planner (`metadata_services.py`) (default: 8)
+- `NFO_REMOVE_STALE_ACTORS`: reserved config for NFO actor policy (currently not applied by the active writer)
+- `NFO_BACKUP_MAX_AGE_DAYS`: reserved config for NFO backup retention tooling (backup cleanup is not automatic yet)
 
 ## Database
 
@@ -215,9 +212,9 @@ The application uses SQLite with these main tables:
 - `video_text_fragments`: Top-ranked OCR text fragments per video for UI display
 - `metadata_operations`: Tracks metadata write operations (status, counts, timestamps)
 - `metadata_operation_items`: Individual file items within a metadata operation (per-file status, old/new comments, NFO path)
-- `metadata_history`: Backup of original metadata before writes for rollback
-- `metadata_comment_cache`: Caches video file comments keyed by file hash with mtime tracking
-- `nfo_actor_cache`: Caches parsed NFO file actor data keyed by NFO path with mtime tracking
+- `metadata_history`: Backup records used for metadata rollback
+- `metadata_comment_cache`: Legacy cache table used by the ffmpeg-comment metadata services
+- `nfo_actor_cache`: Reserved table for NFO actor caching (schema in place)
 
 Database file: `video_faces.db`
 
@@ -228,7 +225,7 @@ indexium/
 ├── app.py                # Flask web application and API routes
 ├── scanner.py            # Video scanning, face clustering, and OCR pipeline
 ├── config.py             # Centralized configuration via environment variables
-├── metadata_services.py  # Metadata planning, writing, backup, and rollback
+├── metadata_services.py  # Legacy ffmpeg-comment metadata services (compatibility/tests)
 ├── nfo_services.py       # NFO/Jellyfin metadata file management
 ├── type_defs.py          # Centralized TypedDict and type definitions
 ├── text_utils.py         # OCR text fragment ranking and filtering
@@ -250,9 +247,9 @@ indexium/
 4. **Clustering**: DBSCAN algorithm groups similar face encodings together
 5. **Tagging**: Web interface allows manual review and naming of face groups
 6. **Manual Review**: Videos without detected faces can be tagged via sampled frame grids
-7. **Metadata Planning**: The planner compares DB tags against existing file metadata and NFO actors to generate a change plan
-8. **Metadata Writing**: Tags are written to video file comments via ffmpeg, with backup and rollback support
-9. **NFO Writing**: Jellyfin-compatible NFO files are updated with actor metadata, preserving non-indexium actors
+7. **Metadata Planning**: The planner compares DB tags against existing NFO actors and flags risk before writes
+8. **NFO Writing**: Jellyfin-compatible NFO files are updated with actor metadata, preserving non-indexium actors
+9. **History & Rollback**: Metadata operations are tracked so you can audit writes and roll them back
 
 ## Technical Details
 
@@ -269,8 +266,8 @@ indexium/
 
 ### Common Issues
 
-1. **"INDEXIUM_VIDEO_DIR environment variable not set"**
-   - Set the environment variable pointing to your video directory
+1. **No videos are discovered**
+   - Set `INDEXIUM_VIDEO_DIR` to the correct folder and verify readable video files exist
 
 2. **Videos not being processed**
    - Check file permissions and supported formats (MP4, MKV, MOV, AVI)
@@ -286,11 +283,11 @@ indexium/
 
 ## Safety Features
 
-- **Non-destructive**: Original video files are backed up before metadata writing, with full rollback support
+- **Non-destructive**: Default metadata writes target NFO sidecar files (video files are not rewritten)
 - **Graceful shutdown**: Ctrl+C during scanning saves progress before exit
 - **File integrity**: Uses content hashing to avoid reprocessing moved files
 - **Backup-friendly**: All data stored in single SQLite database file
-- **Metadata rollback**: Operation history tracks all metadata writes; rollback restores original file comments and NFO actors
+- **Metadata rollback**: Operation history tracks metadata writes; rollback restores previous NFO state
 
 ## Running Tests
 
