@@ -44,7 +44,7 @@ python scanner.py ocr_diagnose           # Diagnose OCR environment setup
 
 - **app.py**: Flask web application with routes for tagging UI, face management, metadata operations, and manual video review workflow. Uses SQLite connection per-request pattern with `get_db_connection()`/`close_db_connection()`. Includes known-people caching and background warmup for manual review.
 
-- **scanner.py**: Video processing pipeline - face detection via `face_recognition` library, DBSCAN clustering, OCR extraction (EasyOCR with Tesseract fallback), multiprocessing workers. Entry point for CLI scanner commands. Requires ffprobe at startup.
+- **scanner.py**: Video processing pipeline - face detection via `face_recognition` library, HDBSCAN clustering, OCR extraction (EasyOCR with Tesseract fallback), multiprocessing workers. Entry point for CLI scanner commands. Requires ffprobe at startup.
 
 - **metadata_services.py**: Metadata planning and writing system with these key classes:
   - `MetadataPlanner`: Generates plans comparing DB tags vs file metadata
@@ -87,7 +87,7 @@ python scanner.py ocr_diagnose           # Diagnose OCR environment setup
 ### Processing Pipeline
 
 1. Scanner processes videos frame-by-frame extracting face encodings (128-dim vectors)
-2. DBSCAN clusters similar encodings (eps=0.4, min_samples=5)
+2. HDBSCAN clusters similar encodings (min_cluster_size=5)
 3. OCR extracts on-screen text during scanning (configurable interval/confidence)
 4. Web UI presents clusters for manual naming
 5. Manual video review workflow for videos without detected faces
@@ -115,8 +115,7 @@ Key environment variables (see `config.py` for full list):
 - `SAVE_CHUNK_SIZE`: Batch size for DB writes (default: 4)
 
 ### Face Detection
-- `DBSCAN_EPS`: Clustering epsilon radius (default: 0.4)
-- `DBSCAN_MIN_SAMPLES`: Minimum cluster size (default: 5)
+- `HDBSCAN_MIN_CLUSTER_SIZE`: Minimum cluster size for HDBSCAN face clustering (default: 5)
 - `FACE_DETECTION_MODEL`: `hog` or `cnn` (default: `hog`)
 - `AUTO_CLASSIFY_THRESHOLD`: Auto-tagging confidence threshold (default: 0.3)
 

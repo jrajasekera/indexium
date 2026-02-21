@@ -17,7 +17,7 @@ def run_pipeline(video_dir: str, work_dir: str) -> None:
 
     os.environ["INDEXIUM_VIDEO_DIR"] = video_dir
     os.environ["INDEXIUM_DB"] = db_path
-    os.environ.setdefault("DBSCAN_MIN_SAMPLES", "1")
+    os.environ.setdefault("HDBSCAN_MIN_CLUSTER_SIZE", "2")
     os.environ.setdefault("CPU_CORES", "1")
 
     from signal_handler import SignalHandler

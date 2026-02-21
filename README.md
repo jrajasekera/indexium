@@ -5,7 +5,7 @@ A Python-based video face scanning and tagging application that automatically de
 ## Features
 
 - **Automatic Face Detection**: Scans video files and extracts faces using computer vision (HOG or CNN models)
-- **Smart Clustering**: Groups similar faces together using DBSCAN clustering algorithm
+- **Smart Clustering**: Groups similar faces together using HDBSCAN clustering algorithm
 - **Web-based Tagging Interface**: Clean, responsive web UI for reviewing and naming face groups
 - **Parallel Processing**: Multi-core video processing for faster scanning
 - **File Hash-based Tracking**: Tracks videos by content hash, handles moved/renamed files gracefully
@@ -169,8 +169,7 @@ environment variables with sensible defaults:
 
 ### Face Detection & Clustering
 - `FACE_DETECTION_MODEL`: `hog` or `cnn` (default: `hog`)
-- `DBSCAN_EPS`: clustering epsilon radius (default: 0.4)
-- `DBSCAN_MIN_SAMPLES`: minimum cluster size (default: 5)
+- `HDBSCAN_MIN_CLUSTER_SIZE`: minimum cluster size for HDBSCAN face clustering (default: 5)
 - `AUTO_CLASSIFY_THRESHOLD`: distance threshold for automatic face naming (default: 0.3)
 
 ### Manual Video Review
@@ -244,7 +243,7 @@ indexium/
 1. **Scanning**: The scanner processes videos frame-by-frame, detecting faces using the `face_recognition` library
 2. **Encoding**: Each face is converted to a 128-dimensional encoding vector
 3. **OCR**: On-screen text is extracted during scanning (EasyOCR with Tesseract fallback) and ranked into top fragments
-4. **Clustering**: DBSCAN algorithm groups similar face encodings together
+4. **Clustering**: HDBSCAN algorithm groups similar face encodings together
 5. **Tagging**: Web interface allows manual review and naming of face groups
 6. **Manual Review**: Videos without detected faces can be tagged via sampled frame grids
 7. **Metadata Planning**: The planner compares DB tags against existing NFO actors and flags risk before writes
@@ -255,7 +254,7 @@ indexium/
 
 - **Face Detection**: HOG or CNN-based face detection from dlib (configurable via `FACE_DETECTION_MODEL`)
 - **Face Recognition**: 128-dimensional face encodings for comparison
-- **Clustering**: DBSCAN with euclidean distance (eps=0.4, min_samples=5)
+- **Clustering**: HDBSCAN with euclidean distance (min_cluster_size=5)
 - **OCR**: EasyOCR (preferred) with automatic Tesseract fallback
 - **Parallel Processing**: Multiprocessing for video scanning
 - **File Tracking**: SHA256 hashing (first and last 25 blocks) for file identification

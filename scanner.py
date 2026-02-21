@@ -17,7 +17,7 @@ import cv2
 import face_recognition
 import ffmpeg
 import numpy as np
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import HDBSCAN
 
 try:
     import easyocr
@@ -1967,14 +1967,12 @@ def cluster_faces():
         encodings = [pickle.loads(row[1]) for row in rows]
         existing_cluster_ids = [row[2] for row in rows]
 
-        # DBSCAN parameters:
-        # eps: The maximum distance between two samples for one to be considered as in the neighborhood of the other.
-        # min_samples: The number of samples in a neighborhood for a point to be considered as a core point.
-        clt = DBSCAN(
+        effective_min_cluster_size = max(2, min(config.HDBSCAN_MIN_CLUSTER_SIZE, len(encodings)))
+        clt = HDBSCAN(
+            min_cluster_size=effective_min_cluster_size,
             metric="euclidean",
             n_jobs=-1,
-            eps=config.DBSCAN_EPS,
-            min_samples=config.DBSCAN_MIN_SAMPLES,
+            allow_single_cluster=True,
         )
         clt.fit(encodings)
 

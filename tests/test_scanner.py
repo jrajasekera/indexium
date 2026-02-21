@@ -124,8 +124,7 @@ def test_cluster_faces_updates_ids(tmp_path, monkeypatch):
         )
     conn.commit()
 
-    monkeypatch.setattr(scanner_module.config, "DBSCAN_EPS", 1.0)
-    monkeypatch.setattr(scanner_module.config, "DBSCAN_MIN_SAMPLES", 1)
+    monkeypatch.setattr(scanner_module.config, "HDBSCAN_MIN_CLUSTER_SIZE", 2)
     scanner_module.cluster_faces()
 
     rows = conn.execute("SELECT cluster_id FROM faces").fetchall()

@@ -80,7 +80,7 @@ def test_e2e_ui_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("INDEXIUM_DB", str(work_dir / "faces.db"))
     monkeypatch.setenv("CPU_CORES", "1")
     monkeypatch.setenv("METADATA_PLAN_WORKERS", "1")
-    monkeypatch.setenv("DBSCAN_MIN_SAMPLES", "1")
+    monkeypatch.setenv("HDBSCAN_MIN_CLUSTER_SIZE", "2")
 
     import e2e_test
 

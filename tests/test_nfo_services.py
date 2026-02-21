@@ -254,6 +254,7 @@ def test_backup_manager_create_backup(tmp_path):
     manager = NfoBackupManager()
     backup_path = manager.create_backup(str(nfo), operation_id=42)
 
+    assert backup_path is not None
     assert backup_path == str(nfo) + ".bak.42"
     assert Path(backup_path).exists()
     assert Path(backup_path).read_text() == nfo.read_text()
@@ -300,6 +301,7 @@ def test_backup_manager_cleanup_backup(tmp_path):
 
     manager = NfoBackupManager()
     backup_path = manager.create_backup(str(nfo), operation_id=42)
+    assert backup_path is not None
     assert Path(backup_path).exists()
 
     manager.cleanup_backup(str(nfo), operation_id=42)

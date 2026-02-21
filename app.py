@@ -54,7 +54,7 @@ _manual_warmup_lock = threading.Lock()
 if config.MANUAL_VIDEO_REVIEW_ENABLED and config.MANUAL_REVIEW_WARMUP_ENABLED:
     worker_count = max(int(config.MANUAL_REVIEW_WARMUP_WORKERS or 1), 1)
     _manual_warmup_executor = ThreadPoolExecutor(max_workers=worker_count)
-    atexit.register(lambda: _manual_warmup_executor.shutdown(wait=False))
+    atexit.register(lambda ex=_manual_warmup_executor: ex.shutdown(wait=False))
 
 _known_people_cache_lock = threading.Lock()
 _known_people_cache: dict[str, Any] = {
